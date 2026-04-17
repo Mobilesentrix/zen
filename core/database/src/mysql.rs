@@ -40,11 +40,12 @@ impl DatabaseAdapter for MySqlAdapter {
         request: &'a DatabaseRequest,
     ) -> Pin<Box<dyn Future<Output = DatabaseResult> + Send + 'a>> {
         Box::pin(async move {
-            let mut query = sqlx::query(&request.query);
+            let query: sqlx::query::Query<'_, MySql, MySqlArguments> = sqlx::query(&request.query);
 
-            for param in &request.params {
-                query = bind_json_value(query, param);
-            }
+            // No need for v1 SELECT query
+            // for param in &request.params {
+            //     query = bind_json_value(query, param);
+            // }
 
             let rows = query
                 .fetch_all(&self.pool)

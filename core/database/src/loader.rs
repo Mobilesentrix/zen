@@ -12,8 +12,8 @@ pub type DynamicDatabaseAdapter = Arc<dyn DatabaseAdapter>;
 #[serde(rename_all = "camelCase")]
 pub struct DatabaseRequest {
     pub query: String,
-    #[serde(default)]
-    pub params: Vec<Value>,
+    // #[serde(default)] // No need as we will always receive consturcted SELECT query
+    // pub params: Vec<Value>,
     // #[serde(default)]
     // pub connection: Option<String>, // Only needed when multiple databases injected
 }
@@ -65,7 +65,7 @@ pub type DatabaseResult = Result<DatabaseResponse, DatabaseError>;
 ///                 .await
 ///                 .map_err(|e| DatabaseError::Query(e.to_string()))?;
 ///
-///             Ok(DatabaseResponse { rows: todo!(), row_count: rows.len() as u64 })
+///             Ok(DatabaseResponse { rows: todo!(), row_count: rows.len() as usize })
 ///         })
 ///     }
 /// }

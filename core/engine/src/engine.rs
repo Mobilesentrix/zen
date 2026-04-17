@@ -11,6 +11,7 @@ use std::future::Future;
 use std::sync::Arc;
 use strum::{EnumString, IntoStaticStr};
 use zen_expression::variable::Variable;
+use zen_database::{DynamicDatabaseAdapter, NoopDatabaseAdapter};
 
 /// Structure used for generating and evaluating JDM decisions
 #[derive(Debug, Clone)]
@@ -18,6 +19,7 @@ pub struct DecisionEngine {
     loader: DynamicLoader,
     adapter: DynamicCustomNode,
     http_handler: DynamicHttpHandler,
+    database: DynamicDatabaseAdapter
 }
 
 #[derive(Debug)]
@@ -85,15 +87,17 @@ impl Default for DecisionEngine {
             loader: Arc::new(NoopLoader::default()),
             adapter: Arc::new(NoopCustomNode::default()),
             http_handler: None,
+            database: Arc::new(NoopDatabaseAdapter::default())
         }
     }
 }
 
 impl DecisionEngine {
-    pub fn new(loader: DynamicLoader, adapter: DynamicCustomNode) -> Self {
+    pub fn new(loader: DynamicLoader, adapter: DynamicCustomNode, database: DynamicDatabaseAdapter) -> Self {
         Self {
             loader,
             adapter,
+            database,
             http_handler: None,
         }
     }
@@ -110,6 +114,11 @@ impl DecisionEngine {
 
     pub fn with_http_handler(mut self, http_handler: DynamicHttpHandler) -> Self {
         self.http_handler = http_handler;
+        self
+    }
+
+    pub fn with_database(mut self, database: DynamicDatabaseAdapter) -> Self {
+        self.database = database;
         self
     }
 
@@ -175,6 +184,8 @@ impl DecisionEngine {
             .with_loader(self.loader.clone())
             .with_adapter(self.adapter.clone())
             .with_http_handler(self.http_handler.clone())
+            .with_database(self.database.clone())
+
     }
 
     /// Retrieves a decision based on the loader

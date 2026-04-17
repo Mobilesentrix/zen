@@ -4,6 +4,7 @@ use crate::decision_graph::walker::{GraphWalker, NodeData, StableDiDecisionGraph
 use crate::engine::EvaluationTraceKind;
 use crate::model::{DecisionContent, DecisionNodeKind};
 use crate::nodes::custom::CustomNodeHandler;
+use crate::nodes::database::DatabaseNodeHandler;
 use crate::nodes::decision::DecisionNodeHandler;
 use crate::nodes::decision_table::DecisionTableNodeHandler;
 use crate::nodes::expression::ExpressionNodeHandler;
@@ -175,6 +176,9 @@ impl DecisionGraph {
                 }
                 DecisionNodeKind::CustomNode { content } => {
                     handle_node(base_ctx, content.clone(), CustomNodeHandler).await
+                }
+                DecisionNodeKind::DatabaseNode { content } => {
+                    handle_node(base_ctx, content.clone(), DatabaseNodeHandler).await
                 }
             };
 

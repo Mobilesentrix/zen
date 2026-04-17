@@ -10,6 +10,7 @@ use anyhow::Context;
 use std::cell::OnceCell;
 use std::sync::Arc;
 use zen_expression::OpcodeCache;
+use zen_database::{DynamicDatabaseAdapter, NoopDatabaseAdapter};
 
 /// This is created on every graph evaluation
 #[derive(Debug, Clone)]
@@ -19,6 +20,7 @@ pub struct NodeHandlerExtensions {
     pub(crate) loader: DynamicLoader,
     pub(crate) custom_node: DynamicCustomNode,
     pub(crate) http_handler: DynamicHttpHandler,
+    pub(crate) database: DynamicDatabaseAdapter,
     pub(crate) compiled_cache: Option<Arc<OpcodeCache>>,
 }
 
@@ -27,7 +29,7 @@ impl Default for NodeHandlerExtensions {
         Self {
             function_runtime: Default::default(),
             validator_cache: Default::default(),
-
+            database: Arc::new(NoopDatabaseAdapter::default()),
             loader: Arc::new(NoopLoader::default()),
             custom_node: Arc::new(NoopCustomNode::default()),
             compiled_cache: None,
@@ -73,5 +75,9 @@ impl NodeHandlerExtensions {
 
     pub fn http_handler(&self) -> &DynamicHttpHandler {
         &self.http_handler
+    }
+
+    pub fn database(&self) -> &DynamicDatabaseAdapter {
+        &self.database
     }
 }

@@ -66,6 +66,9 @@ pub enum DecisionNodeKind {
     CustomNode {
         content: CustomNodeContent,
     },
+    DatabaseNode {
+        content: DatabaseNodeContent
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, Default)]
@@ -205,6 +208,19 @@ pub enum TransformExecutionMode {
 pub struct CustomNodeContent {
     pub kind: Arc<str>,
     pub config: Arc<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseNodeContent {
+    pub query: Arc<str>,
+    // -- No need for v1 as we always use SELECT
+    // #[serde(default)]
+    // pub params: Arc<Vec<Value>>, // Or pub params: Arc<Vec<Arc<str>>> if you want to support complex parameters,
+    // #[serde(default, deserialize_with = "empty_string_is_none")]
+    // pub connection: Option<Arc<str>>, // Needed when multiple dbs are connected
+    #[serde(flatten)]
+    pub transform_attributes: TransformAttributes,
 }
 
 fn empty_string_is_none<'de, D>(deserializer: D) -> Result<Option<Arc<str>>, D::Error>

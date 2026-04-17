@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::cell::OnceCell;
 use std::sync::Arc;
 use zen_expression::variable::Variable;
+use zen_database::{DynamicDatabaseAdapter, NoopDatabaseAdapter};
 
 /// Represents a JDM decision which can be evaluated
 #[derive(Debug, Clone)]
@@ -18,6 +19,7 @@ pub struct Decision {
     content: Arc<DecisionContent>,
     loader: DynamicLoader,
     adapter: DynamicCustomNode,
+    database: DynamicDatabaseAdapter,
     http_handler: DynamicHttpHandler,
     validator_cache: ValidatorCache,
 }
@@ -28,6 +30,7 @@ impl From<DecisionContent> for Decision {
             content: value.into(),
             loader: Arc::new(NoopLoader::default()),
             adapter: Arc::new(NoopCustomNode::default()),
+            database: Arc::new(NoopDatabaseAdapter::default()),
             http_handler: None,
             validator_cache: ValidatorCache::default(),
         }
@@ -40,6 +43,7 @@ impl From<Arc<DecisionContent>> for Decision {
             content: value,
             loader: Arc::new(NoopLoader::default()),
             adapter: Arc::new(NoopCustomNode::default()),
+            database: Arc::new(NoopDatabaseAdapter::default()),
             http_handler: None,
             validator_cache: ValidatorCache::default(),
         }
@@ -59,6 +63,11 @@ impl Decision {
 
     pub fn with_http_handler(mut self, http_handler: DynamicHttpHandler) -> Self {
         self.http_handler = http_handler;
+        self
+    }
+
+    pub fn with_database(mut self, database: DynamicDatabaseAdapter) -> Self {
+        self.database = database;
         self
     }
 
@@ -85,6 +94,7 @@ impl Decision {
                 loader: self.loader.clone(),
                 custom_node: self.adapter.clone(),
                 http_handler: self.http_handler.clone(),
+                database: self.database.clone(),
                 compiled_cache: self.content.compiled_cache.clone(),
                 validator_cache: Arc::new(OnceCell::from(self.validator_cache.clone())),
                 ..Default::default()
