@@ -93,11 +93,11 @@ impl Default for DecisionEngine {
 }
 
 impl DecisionEngine {
-    pub fn new(loader: DynamicLoader, adapter: DynamicCustomNode, database: DynamicDatabaseAdapter) -> Self {
+    pub fn new(loader: DynamicLoader, adapter: DynamicCustomNode) -> Self {
         Self {
             loader,
             adapter,
-            database,
+            database: Arc::new(NoopDatabaseAdapter::default()),
             http_handler: None,
         }
     }

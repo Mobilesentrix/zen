@@ -135,7 +135,8 @@ impl MySqlAdapterBuilder {
     }
 }
 
-fn bind_json_value<'q>(
+#[allow(dead_code)]
+fn bind_json_value<'q>( // Required when the params are passed in query
     query: sqlx::query::Query<'q, MySql, MySqlArguments>,
     value: &Value,
 ) -> sqlx::query::Query<'q, MySql, MySqlArguments> {

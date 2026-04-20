@@ -6,7 +6,6 @@ use tokio::runtime::Runtime;
 use zen_engine::loader::{FilesystemLoader, FilesystemLoaderOptions};
 use zen_engine::nodes::custom::NoopCustomNode;
 use zen_engine::DecisionEngine;
-use zen_database::NoopDatabaseAdapter;
 use zen_expression::variable::Variable;
 
 fn create_graph() -> DecisionEngine {
@@ -20,7 +19,7 @@ fn create_graph() -> DecisionEngine {
             .unwrap(),
     });
 
-    DecisionEngine::new(Arc::new(loader), Arc::new(NoopCustomNode::default()), Arc::new(NoopDatabaseAdapter::default()))
+    DecisionEngine::new(Arc::new(loader), Arc::new(NoopCustomNode::default()))
 }
 
 fn bench_decision(b: &mut Bencher, key: &str, context: Variable) {
