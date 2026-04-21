@@ -91,3 +91,76 @@ impl DatabaseAdapter for NoopDatabaseAdapter {
         Box::pin(async { Err(DatabaseError::NotConfigured) })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn noop_adapter_returns_not_configured() {
+        let noop = NoopDatabaseAdapter::default();
+        let request = DatabaseRequest {
+            query: "SELECT 1".into(),
+        };
+
+        let result = noop.execute(&request).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), DatabaseError::NotConfigured));
+    }
+
+    #[test]
+    fn database_request_serialization() {
+        let req = DatabaseRequest {
+            query: "SELECT * FROM users".into(),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["query"], "SELECT * FROM users");
+    }
+
+    #[test]
+    fn database_request_deserialization() {
+        let json = json!({"query": "SELECT 1"});
+        let req: DatabaseRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.query, "SELECT 1");
+    }
+
+    #[test]
+    fn database_response_serialization() {
+        let resp = DatabaseResponse {
+            rows: json!([{"id": 1}]),
+            row_count: 1,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["rowCount"], 1);
+        assert_eq!(json["rows"][0]["id"], 1);
+    }
+
+    #[test]
+    fn database_response_deserialization() {
+        let json = json!({"rows": [{"id": 1}], "rowCount": 1});
+        let resp: DatabaseResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(resp.row_count, 1);
+    }
+
+    #[test]
+    fn error_display_connection() {
+        let err = DatabaseError::Connection("host unreachable".into());
+        assert_eq!(
+            err.to_string(),
+            "Database connection error: host unreachable"
+        );
+    }
+
+    #[test]
+    fn error_display_query() {
+        let err = DatabaseError::Query("syntax error".into());
+        assert_eq!(err.to_string(), "Query execution error: syntax error");
+    }
+
+    #[test]
+    fn error_display_not_configured() {
+        let err = DatabaseError::NotConfigured;
+        assert_eq!(err.to_string(), "Database adapter not configured");
+    }
+}

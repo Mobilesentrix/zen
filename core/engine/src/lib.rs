@@ -139,3 +139,13 @@ pub use engine::{
 };
 pub use error::EvaluationError;
 pub use zen_expression::Variable;
+pub mod database {
+    //! Database adapters and traits for `zen-engine`.
+    pub use zen_database::{
+        DatabaseAdapter, DatabaseError, DatabaseRequest, DatabaseResponse, DatabaseResult,
+        DynamicDatabaseAdapter, NoopDatabaseAdapter,
+    };
+    pub mod mysql {
+        pub use zen_database::MySqlAdapter;
+    }
+}

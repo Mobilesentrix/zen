@@ -7,6 +7,7 @@ edition = "2024"
 doctest = false
 
 [dependencies]
+base64 = "0.22"
 thiserror = { workspace = true }
 serde_json = { workspace = true, features = [] }
 serde = { workspace = true, features = ["derive", "rc"] }

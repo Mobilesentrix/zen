@@ -1,0 +1,38 @@
+{
+  "nodes": [
+    {
+      "id": "input-1",
+      "name": "request",
+      "type": "inputNode",
+      "content": {}
+    },
+    {
+      "id": "db-1",
+      "name": "fetch_users",
+      "type": "databaseNode",
+      "content": {
+        "query": "SELECT * FROM orders LIMIT 10"
+      }
+    },
+    {
+      "id": "output-1",
+      "name": "response",
+      "type": "outputNode",
+      "content": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "sourceId": "input-1",
+      "targetId": "db-1",
+      "type": "edge"
+    },
+    {
+      "id": "e2",
+      "sourceId": "db-1",
+      "targetId": "output-1",
+      "type": "edge"
+    }
+  ]
+}
