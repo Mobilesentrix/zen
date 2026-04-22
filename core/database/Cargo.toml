@@ -11,6 +11,7 @@ base64 = "0.22"
 thiserror = { workspace = true }
 serde_json = { workspace = true, features = [] }
 serde = { workspace = true, features = ["derive", "rc"] }
+serde_with = { version = "3", features = ["std"] }
 sqlx = { version = "0.8", features = [
     "runtime-tokio",
     "mysql",
@@ -25,3 +26,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 async-trait = { version = "0.1" }
+
+[features]
+bindings = []

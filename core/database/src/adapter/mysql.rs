@@ -1,3 +1,4 @@
+use crate::options::ConnectionOptions;
 use crate::{DatabaseAdapter, DatabaseError, DatabaseRequest, DatabaseResponse, DatabaseResult};
 use serde_json::{Map, Number, Value};
 use sqlx::mysql::{
@@ -138,8 +139,7 @@ impl MySqlAdapterBuilder {
             pool_options = pool_options.max_lifetime(lifetime);
         }
 
-        // Disable the default SET sql_mode=(SELECT CONCAT(...)) statement
-        // for StarRocks compatibility (see MySqlAdapter::connect).
+        // Disable the default SET sql_mode=(SELECT CONCAT(...)) statement for StarRocks compatibility.
         let connect_options = MySqlConnectOptions::from_str(database_url)
             .map_err(|err| DatabaseError::Connection(err.to_string()))?
             .pipes_as_concat(false)
@@ -154,9 +154,31 @@ impl MySqlAdapterBuilder {
     }
 }
 
+impl From<ConnectionOptions> for MySqlAdapterBuilder {
+    fn from(opts: ConnectionOptions) -> Self {
+        let mut builder = MySqlAdapterBuilder::default();
+        if let Some(v) = opts.max_connections {
+            builder = builder.max_connections(v);
+        }
+        if let Some(v) = opts.min_connections {
+            builder = builder.min_connections(v);
+        }
+        if let Some(v) = opts.acquire_timeout {
+            builder = builder.acquire_timeout(v);
+        }
+        if let Some(v) = opts.idle_timeout {
+            builder = builder.idle_timeout(v);
+        }
+        if let Some(v) = opts.max_lifetime {
+            builder = builder.max_lifetime(v);
+        }
+        builder
+    }
+}
+
+// Required when the params are passed in query
 #[allow(dead_code)]
 fn bind_json_value<'q>(
-    // Required when the params are passed in query
     query: sqlx::query::Query<'q, MySql, MySqlArguments>,
     value: &Value,
 ) -> sqlx::query::Query<'q, MySql, MySqlArguments> {
@@ -201,12 +223,10 @@ fn decode_mysql_value(
 
     let type_name = type_info.name().to_ascii_uppercase();
 
-    // ── JSON ────────────────────────────────────────────────────────────
     if type_name == "JSON" {
         return decode_as::<Value>(value);
     }
 
-    // ── Binary / Spatial (must come BEFORE INT check because "POINT" contains "INT") ──
     if type_name.contains("BINARY")
         || type_name.contains("BLOB")
         || type_name.contains("GEOMETRY")
@@ -221,14 +241,10 @@ fn decode_mysql_value(
         });
     }
 
-    // ── BIT ─────────────────────────────────────────────────────────────
     if type_name == "BIT" {
         return decode_as::<u64>(value).map(|v| Value::Number(Number::from(v)));
     }
 
-    // ── Integers ────────────────────────────────────────────────────────
-    // MySQL uses exact names: TINYINT, SMALLINT, MEDIUMINT, INT, BIGINT
-    // with optional " UNSIGNED" suffix.
     if matches!(
         type_name.as_str(),
         "TINYINT"
@@ -248,12 +264,10 @@ fn decode_mysql_value(
         return decode_as::<i64>(value).map(|v| Value::Number(Number::from(v)));
     }
 
-    // ── Floating point ──────────────────────────────────────────────────
     if matches!(type_name.as_str(), "FLOAT" | "DOUBLE") {
         return decode_as::<f64>(value).map(number_to_json);
     }
 
-    // ── Decimal (cannot be decoded as f64 directly by sqlx) ─────────────
     if matches!(type_name.as_str(), "DECIMAL" | "NUMERIC" | "NEWDECIMAL") {
         return decode_as::<String>(value).map(|s| {
             s.parse::<f64>()
@@ -262,13 +276,11 @@ fn decode_mysql_value(
         });
     }
 
-    // ── Boolean (MySQL reports BOOL/BOOLEAN as TINYINT, handled above) ──
-    // This branch exists for compatibility if a driver ever reports "BOOL".
     if matches!(type_name.as_str(), "BOOL" | "BOOLEAN") {
         return decode_as::<bool>(value).map(Value::Bool);
     }
 
-    // ── Temporal types (binary protocol sends raw bytes, not text) ───────
+    // Temporal types (binary protocol sends raw bytes, not text)
     if type_name == "DATE" {
         return decode_as::<chrono::NaiveDate>(value)
             .map(|d| Value::String(d.format("%Y-%m-%d").to_string()));
@@ -288,7 +300,7 @@ fn decode_mysql_value(
         return decode_as::<u16>(value).map(|y| Value::Number(Number::from(y)));
     }
 
-    // ── Fallback: text-like types (VARCHAR, TEXT, CHAR, ENUM, SET, etc.) ──
+    // Fallback: text-like types (VARCHAR, TEXT, CHAR, ENUM, SET, etc.)
     match <String as Decode<MySql>>::decode(value) {
         Ok(s) => Ok(Value::String(s)),
         Err(err) => Err(DatabaseError::Query(format!(
