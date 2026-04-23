@@ -1,4 +1,5 @@
 use serde_json::Value;
+use zen_database::DynamicDatabaseAdapter;
 use std::ffi::{c_char, CStr, CString};
 use std::marker::{PhantomData, PhantomPinned};
 use std::ops::{Deref, DerefMut};
@@ -41,6 +42,10 @@ impl Default for ZenEngine {
 impl ZenEngine {
     pub fn new(loader: DynamicDecisionLoader, custom_node: DynamicCustomNode) -> Self {
         Self(DecisionEngine::new(Arc::new(loader), Arc::new(custom_node)))
+    }
+
+    pub fn with_database(self, database: DynamicDatabaseAdapter) -> Self {
+        Self(self.0.with_database(database))
     }
 }
 

@@ -61,6 +61,16 @@ typedef struct ZenCustomNodeResult {
 typedef struct ZenCustomNodeResult (*ZenCustomNodeNativeCallback)(const char *request);
 
 /**
+ * CResult can be seen as Either<Result, Error>. It cannot, and should not, be initialized
+ * manually. Instead, use error or ok functions for initialisation.
+ */
+typedef struct ZenResult_ZenEngineStruct {
+  struct ZenEngineStruct *result;
+  uint8_t error;
+  char *details;
+} ZenResult_ZenEngineStruct;
+
+/**
  * Frees ZenDecision
  */
 void zen_decision_free(struct ZenDecisionStruct *decision);
@@ -135,3 +145,11 @@ struct ZenEngineStruct *zen_engine_new_native(ZenDecisionLoaderNativeCallback lo
  */
 struct ZenEngineStruct *zen_engine_new_golang(const uintptr_t *maybe_loader,
                                               const uintptr_t *maybe_custom_node);
+
+/**
+ * Creates a DecisionEngine with database for using GoLang handler (optional). Caller is responsible for freeing DecisionEngine.
+ */
+struct ZenResult_ZenEngineStruct zen_engine_new_golang_with_database(const uintptr_t *maybe_loader,
+                                                                     const uintptr_t *maybe_custom_node,
+                                                                     const char *database_url,
+                                                                     const char *database_options);

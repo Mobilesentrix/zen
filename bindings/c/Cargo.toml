@@ -15,6 +15,7 @@ tokio = { workspace = true, features = ["rt"] }
 zen-engine = { path = "../../core/engine", features = ["arbitrary_precision"] }
 zen-expression = { path = "../../core/expression", features = ["arbitrary_precision"] }
 zen-tmpl = { path = "../../core/template" }
+zen-database = { path = "../../core/database", features = ["bindings"] }
 
 [lib]
 crate-type = ["staticlib"]

@@ -1,9 +1,12 @@
 use crate::custom_node::{DynamicCustomNode, ZenCustomNodeResult};
 use crate::engine::{ZenEngine, ZenEngineStruct};
+use crate::helper::safe_str_from_ptr;
 use crate::loader::{DynamicDecisionLoader, ZenDecisionLoaderResult};
+use crate::result::ZenResult;
 use std::ffi::{c_char, CString};
 use std::future::Future;
 use std::pin::Pin;
+use zen_database::ConnectionOptions;
 use zen_engine::loader::{DecisionLoader, LoaderError, LoaderResponse};
 use zen_engine::nodes::custom::{CustomNodeAdapter, CustomNodeRequest};
 use zen_engine::nodes::{NodeError, NodeResult};
@@ -101,6 +104,45 @@ pub extern "C" fn zen_engine_new_golang(
     );
 
     Box::into_raw(Box::new(engine)) as *mut ZenEngineStruct
+}
+
+/// Creates a DecisionEngine with database for using GoLang handler (optional). Caller is responsible for freeing DecisionEngine.  
+#[no_mangle]
+pub extern "C" fn zen_engine_new_golang_with_database(
+    maybe_loader: Option<&usize>,
+    maybe_custom_node: Option<&usize>,
+    database_url: *const c_char,
+    database_options: *const c_char,
+) -> ZenResult<ZenEngineStruct> {
+    let Some(url_str) = safe_str_from_ptr(database_url) else {
+        return ZenResult::error(crate::error::ZenError::DatabaseUrlRequired);
+    };
+
+    let loader = GoDecisionLoader::new(map_handler(maybe_loader.cloned()));
+    let custom_node = GoCustomNode::new(map_handler(maybe_custom_node.cloned()));
+
+    let options: ConnectionOptions = match safe_str_from_ptr(database_options) {
+        Some(s) => match serde_json::from_str(s) {
+            Ok(opts) => opts,
+            Err(_) => return ZenResult::error(crate::error::ZenError::JsonDeserializationFailed),
+        },
+        None => ConnectionOptions::default(),
+    };
+
+    let database = match crate::mt::tokio_runtime()
+        .block_on(zen_database::connect_with_options(url_str, options))
+    {
+        Ok(db) => db,
+        Err(e) => return ZenResult::from(&e),
+    };
+
+    let engine = ZenEngine::new(
+        DynamicDecisionLoader::Go(loader),
+        DynamicCustomNode::Go(custom_node),
+    )
+    .with_database(database);
+
+    ZenResult::ok(Box::into_raw(Box::new(engine)) as *mut ZenEngineStruct)
 }
 
 #[allow(unused_doc_comments)]

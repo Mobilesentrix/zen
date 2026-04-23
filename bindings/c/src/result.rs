@@ -3,6 +3,7 @@ use std::ptr::null_mut;
 
 use libc::c_char;
 
+use zen_database::DatabaseError;
 use zen_engine::loader::LoaderError;
 use zen_engine::EvaluationError;
 use zen_expression::IsolateError;
@@ -83,6 +84,23 @@ impl<T> From<&LoaderError> for ZenResult<T> {
                     message: source.to_string(),
                 })
             }
+        }
+    }
+}
+
+impl<T> From<&DatabaseError> for ZenResult<T> {
+    fn from(database_error: &DatabaseError) -> Self {
+        match database_error {
+            DatabaseError::Connection(msg) => ZenResult::error(ZenError::DatabaseConnectionError {
+                message: msg.clone(),
+            }),
+            DatabaseError::Query(msg) => ZenResult::error(ZenError::DatabaseConnectionError {
+                message: format!("Query error: {msg}"),
+            }),
+            DatabaseError::NotConfigured => ZenResult::error(ZenError::DatabaseUrlRequired),
+            DatabaseError::Other(err) => ZenResult::error(ZenError::DatabaseConnectionError {
+                message: err.to_string(),
+            }),
         }
     }
 }

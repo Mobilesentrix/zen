@@ -21,6 +21,9 @@ pub enum ZenError {
     LoaderInternalError { key: String, message: String },
 
     TemplateEngineError { template: String, message: String },
+
+    DatabaseUrlRequired,
+    DatabaseConnectionError { message: String },
 }
 
 impl ZenError {
@@ -34,6 +37,12 @@ impl ZenError {
             }
             ZenError::TemplateEngineError { template, message } => {
                 Some(json!({ "template": template, "message": message }).to_string())
+            }
+            ZenError::DatabaseUrlRequired => {
+                Some(json!({ "message": "Database url is required" }).to_string())
+            }
+            ZenError::DatabaseConnectionError { message } => {
+                Some(json!({ "message": message }).to_string())
             }
             _ => None,
         }
