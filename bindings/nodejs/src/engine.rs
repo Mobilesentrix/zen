@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use napi::anyhow::{anyhow, Context};
 use napi::bindgen_prelude::{
@@ -23,6 +24,7 @@ use crate::safe_result::SafeResult;
 use crate::types::{ZenEngineHandlerRequest, ZenEngineHandlerResponse};
 use zen_engine::model::DecisionContent;
 use zen_engine::{DecisionEngine, EvaluationSerializedOptions, EvaluationTraceKind};
+use zen_database::{connect_with_options, ConnectionOptions};
 
 #[napi]
 pub struct ZenEngine {
@@ -119,6 +121,28 @@ pub struct ZenEngineOptions {
         Option<Function<'static, ZenHttpHandlerRequest, Promise<ZenHttpHandlerResponse>>>,
 }
 
+#[napi(object)]
+#[derive(Default)]
+pub struct DatabaseOptions {
+    pub max_connections: Option<u8>,
+    pub min_connections: Option<u8>,
+    pub idle_timeout: Option<u32>,
+    pub acquire_timeout: Option<u32>,
+    pub max_lifetime: Option<u32>
+}
+
+impl From<DatabaseOptions> for ConnectionOptions {
+    fn from(val: DatabaseOptions) -> Self {
+        Self {
+            max_connections: val.max_connections.map(Into::into),
+            min_connections: val.min_connections.map(Into::into),
+            acquire_timeout: val.acquire_timeout.map(|ms| Duration::from_millis(ms.into())),
+            idle_timeout: val.idle_timeout.map(|ms| Duration::from_millis(ms.into())),
+            max_lifetime: val.max_lifetime.map(|ms| Duration::from_millis(ms.into())),
+        }
+    }
+}
+
 #[napi]
 impl ZenEngine {
     #[napi(constructor)]
@@ -194,6 +218,31 @@ impl ZenEngine {
             loader_tsfn: loader_tsfn_opt,
             http_handler_tsfn: http_handler_tsfn_opt,
             custom_node_tsfn: custom_node_tsfn_opt,
+        })
+    }
+
+    #[napi]
+    pub async fn with_database(
+        &self,
+        url: String,
+        options: Option<DatabaseOptions>
+    ) -> napi::Result<ZenEngine> {
+        let conn_options = match options {
+            None => ConnectionOptions::default(),
+            Some(opts) => ConnectionOptions::from(opts)
+        };
+
+        let database = connect_with_options(&url, conn_options)
+            .await
+            .map_err(|e| anyhow!("Database connection failed: {e}"))?;
+        let engine = (*self.graph).clone().with_database(database);
+
+        Ok(ZenEngine {
+            graph: Arc::new(engine),
+
+            loader_tsfn: self.loader_tsfn.clone(),
+            http_handler_tsfn: self.http_handler_tsfn.clone(),
+            custom_node_tsfn: self.custom_node_tsfn.clone(),
         })
     }
 

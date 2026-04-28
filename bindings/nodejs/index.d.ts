@@ -14,6 +14,7 @@ export declare class ZenDecisionContent {
 
 export declare class ZenEngine {
   constructor(options?: ZenEngineOptions | undefined | null)
+  withDatabase(url: string, options?: DatabaseOptions | undefined | null): Promise<ZenEngine>
   evaluate(key: string, context: any, opts?: ZenEvaluateOptions | undefined | null): Promise<ZenEngineResponse>
   createDecision(content: ZenDecisionContent | Buffer | object): ZenDecision
   getDecision(key: string): Promise<ZenDecision>
@@ -28,6 +29,14 @@ export declare class ZenEngineHandlerRequest {
   get input(): any
   getField(path: string): unknown
   getFieldRaw(path: string): unknown
+}
+
+export interface DatabaseOptions {
+  maxConnections?: number
+  minConnections?: number
+  idleTimeout?: number
+  acquireTimeout?: number
+  maxLifetime?: number
 }
 
 export interface DecisionNode {

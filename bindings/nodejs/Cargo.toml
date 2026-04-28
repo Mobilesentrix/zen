@@ -18,6 +18,7 @@ serde_json = { workspace = true }
 zen-engine = { path = "../../core/engine", features = ["arbitrary_precision"] }
 zen-expression = { path = "../../core/expression", features = ["arbitrary_precision"] }
 zen-tmpl = { path = "../../core/template" }
+zen-database = { path = "../../core/database", features = ["bindings"]}
 serde = { workspace = true, features = ["derive"] }
 json_dotpath = { workspace = true }
 

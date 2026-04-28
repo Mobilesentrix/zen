@@ -178,3 +178,32 @@ describe('Expressions', () => {
     }
   });
 });
+
+describe('Database', () => {
+  it('Creates engine with database support', async () => {
+    const engine = new ZenEngine({ loader });
+
+    const dbEngine = await engine.withDatabase('mysql://myuser:12341234@localhost:9030/test', {
+      maxConnections: 5,
+      acquireTimeout: 5000,
+    });
+
+    const result = await dbEngine.evaluate('database-node.json', { someInput: 'value' });
+    expect(result.result).toBeDefined();
+
+    dbEngine.dispose();
+  }, 15000);
+
+  it('Fails gracefully with invalid database URL', async () => {
+    const engine = new ZenEngine({ loader });
+
+    await expect(
+      engine.withDatabase('mysql://invalid:invalid@localhost:9999/nope', {
+        maxConnections: 5,
+        acquireTimeout: 2000,
+      })
+    ).rejects.toThrow('Database connection failed');
+
+    engine.dispose();
+  }, 15000);
+});
