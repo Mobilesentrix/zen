@@ -66,10 +66,15 @@ impl DatabaseAdapter for MySqlAdapter {
                 .map_err(|err| DatabaseError::Query(err.to_string()))?;
 
             let row_count = rows.len() as usize;
-            let rows = rows
+            let mut rows = rows
                 .into_iter()
                 .map(row_to_json)
                 .collect::<Result<Vec<_>, _>>()?;
+
+            // Parsing the json string to json object for joins or named structs in query results
+            for row in rows.iter_mut() {
+                parse_json_strings(row);
+            }
 
             Ok(DatabaseResponse {
                 rows: Value::Array(rows),
@@ -321,6 +326,32 @@ fn number_to_json(value: f64) -> Value {
     Number::from_f64(value)
         .map(Value::Number)
         .unwrap_or(Value::Null)
+}
+
+fn parse_json_strings(val: &mut Value) {
+    match val {
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+                || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+            {
+                if let Ok(parsed) = serde_json::from_str(s) {
+                    *val = parsed;
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                parse_json_strings(item);
+            }
+        }
+        Value::Object(obj) => {
+            for (_, value) in obj.iter_mut() {
+                parse_json_strings(value);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
