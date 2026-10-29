@@ -21,7 +21,7 @@ use crate::workspace::types::{
 };
 use crate::DecisionGraphTrace;
 
-pub type GraphTraceMap = HashMap<Arc<str>, DecisionGraphTrace>;
+pub type GraphTraceMap = crate::decision_graph::TraceMap<Arc<str>, DecisionGraphTrace>;
 
 struct EnhanceState<'a> {
     db: &'a Db,

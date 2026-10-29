@@ -186,3 +186,42 @@ struct ZenEngineStruct *zen_engine_new_golang(const uintptr_t *maybe_loader,
  */
 struct ZenResult_ZenEngineStruct zen_engine_new_golang_with_loader_config(struct ZenEngineLoaderConfig config,
                                                                           const uintptr_t *maybe_custom_node);
+
+/**
+ * Drops the cached decision for `key`; the next evaluation reloads it through the loader
+ * (loader-config engines recompile their set). Returns 0, or 1 (InvalidArgument) when
+ * `engine` or `key` is null or `key` is not UTF-8. `key` is only read during the call.
+ */
+uint8_t zen_engine_invalidate_decision(const struct ZenEngineStruct *engine, const char *key);
+
+/**
+ * Drops every cached decision (rules refreshed, loader content replaced). Returns 0, or 1
+ * (InvalidArgument) when `engine` is null.
+ */
+uint8_t zen_engine_clear_decisions(const struct ZenEngineStruct *engine);
+
+/**
+ * Creates an engine from a loader configuration with the database node installed.
+ * `maybe_custom_node` handles every custom node whose kind is not "database" (may be null).
+ * Caller frees the engine with zen_engine_free.
+ */
+struct ZenResult_ZenEngineStruct zen_engine_new_with_loader_config_and_database(struct ZenEngineLoaderConfig config,
+                                                                                struct ZenCustomNodeResult (*maybe_custom_node)(const char *request),
+                                                                                const char *database_config);
+
+/**
+ * Go: like zen_engine_new_golang, plus the database node.
+ * `maybe_loader` / `maybe_custom_node` are cgo handles (null or 0 = none).
+ * Caller frees the engine with zen_engine_free.
+ */
+struct ZenResult_ZenEngineStruct zen_engine_new_golang_with_database(const uintptr_t *maybe_loader,
+                                                                     const uintptr_t *maybe_custom_node,
+                                                                     const char *database_config);
+
+/**
+ * Go: like zen_engine_new_golang_with_loader_config, plus the database node.
+ * Caller frees the engine with zen_engine_free.
+ */
+struct ZenResult_ZenEngineStruct zen_engine_new_golang_with_loader_config_and_database(struct ZenEngineLoaderConfig config,
+                                                                                       const uintptr_t *maybe_custom_node,
+                                                                                       const char *database_config);

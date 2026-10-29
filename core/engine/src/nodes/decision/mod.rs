@@ -1,4 +1,5 @@
 use crate::decision_graph::graph::{DecisionGraph, DecisionGraphConfig};
+use crate::nodes::failure::{self, FailedNode};
 use crate::nodes::{NodeContext, NodeContextExt, NodeError, NodeHandler, NodeResult};
 use crate::EvaluationError;
 use std::cell::RefCell;
@@ -61,9 +62,10 @@ impl NodeHandler for DecisionNodeHandler {
                     std::sync::Arc::new(owned)
                 };
 
-            let mut extensions = ctx.extensions.clone();
+            let mut extensions = (*ctx.extensions).clone();
             extensions.compiled_cache = sub_graph.compiled_cache.clone();
             extensions.dt_indexes = sub_graph.dt_indexes.clone();
+            extensions.dt_cells = sub_graph.dt_cells.clone();
             extensions.validator_cache =
                 std::sync::Arc::new(std::cell::OnceCell::from(sub_graph.validator_cache.clone()));
 
@@ -100,8 +102,18 @@ impl NodeHandler for DecisionNodeHandler {
                 ctx.success(result.result)
             }
             Err(err) => {
-                if let EvaluationError::NodeError { trace, .. } = err.deref() {
+                if let EvaluationError::NodeError {
+                    trace,
+                    node_id,
+                    source,
+                } = err.deref()
+                {
                     ctx.trace(|t| *t = trace.to_variable());
+                    if ctx.config.trace {
+                        // MobileSentrix: the failing step inside the sub-decision, on this node.
+                        let failure = failure::sub_decision(node_id, source.as_ref());
+                        return ctx.error(FailedNode::new(failure, err.to_string()));
+                    }
                 }
 
                 ctx.error(err.to_string())

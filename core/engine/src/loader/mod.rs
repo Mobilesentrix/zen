@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use thiserror::Error;
 
-pub use cached::CachedLoader;
+pub use cached::{CachedLoader, DEFAULT_CACHED_DECISIONS};
 pub use closure::ClosureLoader;
 pub use config::LoaderConfig;
 pub use filesystem::{FilesystemLoader, FilesystemLoaderOptions};

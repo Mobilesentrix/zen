@@ -17,6 +17,7 @@ rust_decimal = { workspace = true, features = ["maths-nopanic"] }
 rust_decimal_macros = { workspace = true }
 thiserror = { workspace = true }
 nohash-hasher = { workspace = true }
+indexmap = { version = "2", features = ["serde"] }
 
 [features]
 default = []

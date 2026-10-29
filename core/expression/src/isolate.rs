@@ -60,6 +60,25 @@ impl Isolate {
         self
     }
 
+    /// MobileSentrix: reuses this isolate as if it were
+    /// `Isolate::with_environment(variable).with_cache(cache.cloned())`: the environment and
+    /// locals are replaced and the reference cache emptied (the lexer, compiler, VM and arena
+    /// buffers are reset before every run anyway, and keep their capacity). A cache that is the
+    /// same `Arc` is kept without touching its count.
+    pub fn reset(&mut self, variable: Variable, cache: Option<&Arc<OpcodeCache>>) {
+        self.set_environment(variable);
+        match (cache, &self.cache) {
+            (Some(new), Some(current)) if Arc::ptr_eq(new, current) => {}
+            (new, _) => self.cache = new.cloned(),
+        }
+    }
+
+    /// Drops the environment, locals and references (the data of the last use), keeping the
+    /// buffers for the next [`reset`](Self::reset).
+    pub fn release(&mut self) {
+        self.set_environment(Variable::Null);
+    }
+
     pub fn set_environment(&mut self, variable: Variable) {
         self.scope.set_base(variable);
         self.references.clear();
@@ -142,12 +161,10 @@ impl Isolate {
     }
 
     pub fn run_standard(&mut self, source: &str) -> Result<Variable, IsolateError> {
-        let cached = self
-            .cache
-            .as_ref()
-            .and_then(|c| c.standard.get(source).cloned());
-        if let Some(codes) = cached {
-            return self.run_compiled(codes.as_ref());
+        // MobileSentrix: run the cached bytecode in place (disjoint field borrows) instead of
+        // cloning its Arc, which cost two atomic updates of a counter every thread shares.
+        if let Some(codes) = self.cache.as_ref().and_then(|c| c.standard.get(source)) {
+            return Ok(self.vm.run(codes, &self.scope)?);
         }
 
         self.run_internal(source, ExpressionKind::Standard)?;
@@ -171,12 +188,9 @@ impl Isolate {
     }
 
     pub fn run_unary(&mut self, source: &str) -> Result<bool, IsolateError> {
-        let cached = self
-            .cache
-            .as_ref()
-            .and_then(|c| c.unary.get(source).cloned());
-        if let Some(codes) = cached {
-            return self.run_unary_compiled(codes.as_ref());
+        if let Some(codes) = self.cache.as_ref().and_then(|c| c.unary.get(source)) {
+            let result = self.vm.run(codes, &self.scope)?;
+            return result.as_bool().ok_or_else(|| IsolateError::ValueCastError);
         }
 
         self.run_internal(source, ExpressionKind::Unary)?;
@@ -190,7 +204,7 @@ impl Isolate {
     pub fn run_unary_compiled(&mut self, code: &[Opcode]) -> Result<bool, IsolateError> {
         let result = self.vm.run(code, &self.scope)?;
 
-        result.as_bool().ok_or_else(|| IsolateError::ValueCastError)
+        result.as_bool().ok_or(IsolateError::ValueCastError)
     }
 }
 

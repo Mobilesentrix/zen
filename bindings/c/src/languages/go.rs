@@ -1,7 +1,9 @@
 use crate::custom_node::{DynamicCustomNode, ZenCustomNodeResult};
 use crate::engine::{ZenEngine, ZenEngineStruct};
+use crate::guard::{guarded, guarded_ptr};
 use crate::loader::{DynamicDecisionLoader, ZenDecisionLoaderResult, ZenEngineLoaderConfig};
 use crate::result::ZenResult;
+use anyhow::anyhow;
 use std::ffi::{c_char, CString};
 use std::future::Future;
 use std::pin::Pin;
@@ -30,7 +32,12 @@ impl DecisionLoader for GoDecisionLoader {
                 return Err(LoaderError::NotFound(key.to_string()).into());
             };
 
-            let c_key = CString::new(key).unwrap();
+            let Ok(c_key) = CString::new(key) else {
+                return Err(LoaderError::Internal {
+                    key: key.to_string(),
+                    source: anyhow!("decision key contains a NUL byte"),
+                });
+            };
             let c_content_ptr =
                 unsafe { zen_engine_go_loader_callback(handler.clone(), c_key.as_ptr()) };
 
@@ -82,7 +89,7 @@ impl CustomNodeAdapter for GoCustomNode {
     }
 }
 
-fn map_handler(i: Option<usize>) -> Option<usize> {
+pub(crate) fn map_handler(i: Option<usize>) -> Option<usize> {
     let Some(j) = i else { return None };
 
     (j > 0).then_some(j)
@@ -94,14 +101,16 @@ pub extern "C" fn zen_engine_new_golang(
     maybe_loader: Option<&usize>,
     maybe_custom_node: Option<&usize>,
 ) -> *mut ZenEngineStruct {
-    let loader = GoDecisionLoader::new(map_handler(maybe_loader.cloned()));
-    let custom_node = GoCustomNode::new(map_handler(maybe_custom_node.cloned()));
-    let engine = ZenEngine::new(
-        DynamicDecisionLoader::Go(loader),
-        DynamicCustomNode::Go(custom_node),
-    );
+    guarded_ptr(|| {
+        let loader = GoDecisionLoader::new(map_handler(maybe_loader.cloned()));
+        let custom_node = GoCustomNode::new(map_handler(maybe_custom_node.cloned()));
+        let engine = ZenEngine::new(
+            DynamicDecisionLoader::Go(loader),
+            DynamicCustomNode::Go(custom_node),
+        );
 
-    Box::into_raw(Box::new(engine)) as *mut ZenEngineStruct
+        Box::into_raw(Box::new(engine)) as *mut ZenEngineStruct
+    })
 }
 
 /// Creates a DecisionEngine from a loader configuration using GoLang handler (optional). Caller is responsible for freeing DecisionEngine.
@@ -110,19 +119,21 @@ pub extern "C" fn zen_engine_new_golang_with_loader_config(
     config: ZenEngineLoaderConfig,
     maybe_custom_node: Option<&usize>,
 ) -> ZenResult<ZenEngineStruct> {
-    let loader = match config.to_dynamic_loader() {
-        Ok(loader) => loader,
-        Err(error) => return ZenResult::error(error),
-    };
+    guarded(|| {
+        let loader = match config.to_dynamic_loader() {
+            Ok(loader) => loader,
+            Err(error) => return ZenResult::error(error),
+        };
 
-    let custom_node = GoCustomNode::new(map_handler(maybe_custom_node.cloned()));
-    let engine = ZenEngine::new(
-        DynamicDecisionLoader::Config(loader),
-        DynamicCustomNode::Go(custom_node),
-    );
-    engine.compile();
+        let custom_node = GoCustomNode::new(map_handler(maybe_custom_node.cloned()));
+        let engine = ZenEngine::new(
+            DynamicDecisionLoader::Config(loader),
+            DynamicCustomNode::Go(custom_node),
+        );
+        engine.compile();
 
-    ZenResult::ok(Box::into_raw(Box::new(engine)) as *mut ZenEngineStruct)
+        ZenResult::ok(Box::into_raw(Box::new(engine)) as *mut ZenEngineStruct)
+    })
 }
 
 #[allow(unused_doc_comments)]

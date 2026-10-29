@@ -5,6 +5,7 @@ use serde_json::Value;
 use zen_expression::{evaluate_expression, evaluate_unary_expression};
 
 use crate::error::ZenError;
+use crate::guard::guarded;
 use crate::helper::{safe_cstr_from_ptr, safe_str_from_ptr};
 use crate::result::ZenResult;
 
@@ -13,30 +14,32 @@ pub extern "C" fn zen_evaluate_expression(
     expression: *const c_char,
     context: *const c_char,
 ) -> ZenResult<c_char> {
-    let Some(expression_str) = safe_str_from_ptr(expression) else {
-        return ZenResult::error(ZenError::InvalidArgument);
-    };
+    guarded(|| {
+        let Some(expression_str) = safe_str_from_ptr(expression) else {
+            return ZenResult::error(ZenError::InvalidArgument);
+        };
 
-    let Some(context_cstr) = safe_cstr_from_ptr(context) else {
-        return ZenResult::error(ZenError::InvalidArgument);
-    };
+        let Some(context_cstr) = safe_cstr_from_ptr(context) else {
+            return ZenResult::error(ZenError::InvalidArgument);
+        };
 
-    let Ok(context_val) = serde_json::from_slice::<Value>(context_cstr.to_bytes()) else {
-        return ZenResult::error(ZenError::JsonDeserializationFailed);
-    };
+        let Ok(context_val) = serde_json::from_slice::<Value>(context_cstr.to_bytes()) else {
+            return ZenResult::error(ZenError::JsonDeserializationFailed);
+        };
 
-    let maybe_result = evaluate_expression(expression_str, context_val.into());
-    let result = match maybe_result {
-        Ok(r) => r,
-        Err(err) => return ZenResult::from(&err),
-    };
+        let maybe_result = evaluate_expression(expression_str, context_val.into());
+        let result = match maybe_result {
+            Ok(r) => r,
+            Err(err) => return ZenResult::from(&err),
+        };
 
-    let Ok(string_result) = serde_json::to_string(&result) else {
-        return ZenResult::error(ZenError::JsonSerializationFailed);
-    };
+        let Ok(string_result) = serde_json::to_string(&result) else {
+            return ZenResult::error(ZenError::JsonSerializationFailed);
+        };
 
-    let result = unsafe { CString::from_vec_unchecked(string_result.into_bytes()) };
-    ZenResult::ok(result.into_raw())
+        let result = unsafe { CString::from_vec_unchecked(string_result.into_bytes()) };
+        ZenResult::ok(crate::ms_alloc::malloc_cstring(result))
+    })
 }
 
 /// Evaluate unary expression, responsible for freeing expression and context
@@ -47,27 +50,29 @@ pub extern "C" fn zen_evaluate_unary_expression(
     expression: *const c_char,
     context: *const c_char,
 ) -> ZenResult<c_int> {
-    let Some(expression_str) = safe_str_from_ptr(expression) else {
-        return ZenResult::error(ZenError::InvalidArgument);
-    };
+    guarded(|| {
+        let Some(expression_str) = safe_str_from_ptr(expression) else {
+            return ZenResult::error(ZenError::InvalidArgument);
+        };
 
-    let Some(context_cstr) = safe_cstr_from_ptr(context) else {
-        return ZenResult::error(ZenError::InvalidArgument);
-    };
+        let Some(context_cstr) = safe_cstr_from_ptr(context) else {
+            return ZenResult::error(ZenError::InvalidArgument);
+        };
 
-    let Ok(context_val) = serde_json::from_slice::<Value>(context_cstr.to_bytes()) else {
-        return ZenResult::error(ZenError::JsonDeserializationFailed);
-    };
+        let Ok(context_val) = serde_json::from_slice::<Value>(context_cstr.to_bytes()) else {
+            return ZenResult::error(ZenError::JsonDeserializationFailed);
+        };
 
-    let maybe_result = evaluate_unary_expression(expression_str, context_val.into());
-    let result = match maybe_result {
-        Ok(r) => r,
-        Err(err) => return ZenResult::from(&err),
-    };
+        let maybe_result = evaluate_unary_expression(expression_str, context_val.into());
+        let result = match maybe_result {
+            Ok(r) => r,
+            Err(err) => return ZenResult::from(&err),
+        };
 
-    let c_result: i32 = if result { 1 } else { 0 };
+        let c_result: i32 = if result { 1 } else { 0 };
 
-    ZenResult::ok(Box::into_raw(Box::new(c_result)))
+        ZenResult::ok(crate::ms_alloc::malloc_value(c_result))
+    })
 }
 
 /// Evaluate unary expression, responsible for freeing expression and context
@@ -78,32 +83,34 @@ pub extern "C" fn zen_evaluate_template(
     template: *const c_char,
     context: *const c_char,
 ) -> ZenResult<c_char> {
-    let Some(template_str) = safe_str_from_ptr(template) else {
-        return ZenResult::error(ZenError::InvalidArgument);
-    };
+    guarded(|| {
+        let Some(template_str) = safe_str_from_ptr(template) else {
+            return ZenResult::error(ZenError::InvalidArgument);
+        };
 
-    let Some(context_cstr) = safe_cstr_from_ptr(context) else {
-        return ZenResult::error(ZenError::InvalidArgument);
-    };
+        let Some(context_cstr) = safe_cstr_from_ptr(context) else {
+            return ZenResult::error(ZenError::InvalidArgument);
+        };
 
-    let Ok(context_val) = serde_json::from_slice::<Value>(context_cstr.to_bytes()) else {
-        return ZenResult::error(ZenError::JsonDeserializationFailed);
-    };
+        let Ok(context_val) = serde_json::from_slice::<Value>(context_cstr.to_bytes()) else {
+            return ZenResult::error(ZenError::JsonDeserializationFailed);
+        };
 
-    let result = match zen_tmpl::render(template_str, context_val.into()) {
-        Ok(r) => r,
-        Err(err) => {
-            return ZenResult::error(ZenError::TemplateEngineError {
-                message: err.to_string(),
-                template: template_str.to_string(),
-            })
-        }
-    };
+        let result = match zen_tmpl::render(template_str, context_val.into()) {
+            Ok(r) => r,
+            Err(err) => {
+                return ZenResult::error(ZenError::TemplateEngineError {
+                    message: err.to_string(),
+                    template: template_str.to_string(),
+                })
+            }
+        };
 
-    let Ok(s_result) = serde_json::to_string(&result) else {
-        return ZenResult::error(ZenError::JsonSerializationFailed);
-    };
+        let Ok(s_result) = serde_json::to_string(&result) else {
+            return ZenResult::error(ZenError::JsonSerializationFailed);
+        };
 
-    let c_result = unsafe { CString::from_vec_unchecked(s_result.into_bytes()) };
-    ZenResult::ok(c_result.into_raw())
+        let c_result = unsafe { CString::from_vec_unchecked(s_result.into_bytes()) };
+        ZenResult::ok(crate::ms_alloc::malloc_cstring(c_result))
+    })
 }

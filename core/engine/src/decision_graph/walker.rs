@@ -1,9 +1,7 @@
-use ahash::HashMap;
 use fixedbitset::FixedBitSet;
-use petgraph::data::DataMap;
 use petgraph::matrix_graph::Zero;
 use petgraph::prelude::{EdgeIndex, NodeIndex, StableDiGraph};
-use petgraph::visit::{EdgeRef, IntoNodeIdentifiers, VisitMap, Visitable};
+use petgraph::visit::{EdgeRef, VisitMap};
 use petgraph::{Incoming, Outgoing};
 use std::ops::Deref;
 use std::sync::atomic::Ordering;
@@ -11,12 +9,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::config::ZEN_CONFIG;
+use crate::decision_graph::view::GraphView;
 use crate::model::{
     DecisionEdge, DecisionNode, DecisionNodeKind, SwitchStatement, SwitchStatementHitPolicy,
 };
 use crate::DecisionGraphTrace;
 use zen_expression::variable::{ToVariable, Variable};
-use zen_expression::Isolate;
+use zen_expression::{Isolate, OpcodeCache};
 
 pub(crate) type StableDiDecisionGraph = StableDiGraph<Arc<DecisionNode>, Arc<DecisionEdge>>;
 
@@ -26,47 +25,84 @@ pub(crate) struct NodeData {
     pub nodes_view: Option<Variable>,
 }
 
+/// MobileSentrix: node outputs by node index in a dense vector (graph indices are dense and
+/// stable), instead of a hash map that hashed the index on every lookup, and the walker looks
+/// up every visited node again after each switch node resets the walk.
+#[derive(Default)]
+pub(crate) struct NodeDataMap {
+    slots: Vec<Option<NodeData>>,
+}
+
+impl NodeDataMap {
+    #[inline]
+    fn get(&self, id: &NodeIndex) -> Option<&NodeData> {
+        self.slots.get(id.index())?.as_ref()
+    }
+
+    #[inline]
+    fn contains_key(&self, id: &NodeIndex) -> bool {
+        self.get(id).is_some()
+    }
+
+    fn insert(&mut self, id: NodeIndex, value: NodeData) {
+        let i = id.index();
+        if i >= self.slots.len() {
+            self.slots.resize_with(i + 1, || None);
+        }
+        self.slots[i] = Some(value);
+    }
+
+    fn values(&self) -> impl Iterator<Item = &NodeData> {
+        self.slots.iter().filter_map(Option::as_ref)
+    }
+}
+
 pub(crate) struct GraphWalker {
     iter: usize,
-    node_data: HashMap<NodeIndex, NodeData>,
+    node_data: NodeDataMap,
     ordered: FixedBitSet,
     to_visit: Vec<NodeIndex>,
     visited_switch_nodes: Vec<NodeIndex>,
 
     nodes_in_context: bool,
+    /// MobileSentrix: nodes that can read `$nodes` (None = all).
+    nodes_readers: Option<Arc<ahash::HashSet<Arc<str>>>>,
+    /// MobileSentrix: the decision's opcode cache, for switch conditions.
+    compiled_cache: Option<Arc<OpcodeCache>>,
 }
 
 const ITER_MAX: usize = 1_000;
 
 impl GraphWalker {
-    pub fn new(graph: &StableDiDecisionGraph) -> Self {
+    pub fn new(graph: &GraphView) -> Self {
         let mut walker = Self::empty(graph);
         walker.initialize_input_nodes(graph);
         walker
     }
 
-    fn initialize_input_nodes(&mut self, g: &StableDiDecisionGraph) {
+    fn initialize_input_nodes(&mut self, g: &GraphView) {
         // find all initial nodes (nodes without incoming edges)
-        self.to_visit
-            .extend(g.node_identifiers().filter(move |&nid| {
-                g.node_weight(nid)
-                    .is_some_and(|n| matches!(n.kind, DecisionNodeKind::InputNode { content: _ }))
-            }));
+        self.to_visit.extend(g.node_indices().filter(move |&nid| {
+            g.node_weight(nid)
+                .is_some_and(|n| matches!(n.kind, DecisionNodeKind::InputNode { content: _ }))
+        }));
     }
 
-    fn empty(graph: &StableDiDecisionGraph) -> Self {
+    fn empty(graph: &GraphView) -> Self {
         Self {
-            ordered: graph.visit_map(),
+            ordered: FixedBitSet::with_capacity(graph.node_bound()),
             to_visit: Vec::new(),
             node_data: Default::default(),
             visited_switch_nodes: Default::default(),
             iter: 0,
 
             nodes_in_context: ZEN_CONFIG.nodes_in_context.load(Ordering::Relaxed),
+            nodes_readers: None,
+            compiled_cache: None,
         }
     }
 
-    pub fn reset(&mut self, g: &StableDiDecisionGraph) {
+    pub fn reset(&mut self, g: &GraphView) {
         self.ordered.clear();
         self.to_visit.clear();
         self.initialize_input_nodes(g);
@@ -74,11 +110,11 @@ impl GraphWalker {
         self.iter += 1;
     }
 
-    pub fn get_node_data(&self, node_id: NodeIndex) -> Option<Variable> {
-        Some(self.node_data.get(&node_id)?.data.clone())
+    pub fn has_node_data(&self, node_id: NodeIndex) -> bool {
+        self.node_data.contains_key(&node_id)
     }
 
-    pub fn ending_variables(&self, g: &StableDiDecisionGraph) -> Variable {
+    pub fn ending_variables(&self, g: &GraphView) -> Variable {
         g.node_indices()
             .filter(|nid| {
                 self.ordered.is_visited(nid)
@@ -95,8 +131,8 @@ impl GraphWalker {
     pub fn get_all_node_data(&self) -> Variable {
         let node_values = self
             .node_data
-            .iter()
-            .filter_map(|(_, nd)| {
+            .values()
+            .filter_map(|nd| {
                 let value = nd.nodes_view.clone().unwrap_or_else(|| nd.data.clone());
                 Some((nd.name.clone(), value))
             })
@@ -109,15 +145,25 @@ impl GraphWalker {
         self.node_data.insert(node_id, value);
     }
 
-    pub fn nodes_context(&self) -> Option<Variable> {
-        self.nodes_in_context.then(|| self.get_all_node_data())
+    pub fn set_compiled_cache(&mut self, cache: Option<Arc<OpcodeCache>>) {
+        self.compiled_cache = cache;
     }
 
-    pub fn incoming_node_data(
-        &self,
-        g: &StableDiDecisionGraph,
-        node_id: NodeIndex,
-    ) -> (Variable, Variable) {
+    pub fn set_nodes_readers(&mut self, readers: Option<Arc<ahash::HashSet<Arc<str>>>>) {
+        self.nodes_readers = readers;
+    }
+
+    /// `$nodes` for `node_id`, built only when that node can read it. A node that never names
+    /// `$nodes` behaves the same with or without it.
+    pub fn nodes_context_for(&self, node_id: &str) -> Option<Variable> {
+        let reads = self
+            .nodes_readers
+            .as_ref()
+            .is_none_or(|readers| readers.contains(node_id));
+        (self.nodes_in_context && reads).then(|| self.get_all_node_data())
+    }
+
+    pub fn incoming_node_data(&self, g: &GraphView, node_id: NodeIndex) -> (Variable, Variable) {
         let value = self.merge_node_data(g.neighbors_directed(node_id, Incoming));
 
         (value.clone(), value)
@@ -140,17 +186,20 @@ impl GraphWalker {
         incoming.fold(head, |mut prev, nd| prev.merge_clone(&nd.data))
     }
 
+    /// `graph` is this evaluation's view of the shared graph; switch nodes remove edges in it.
     pub fn next<F: FnMut(DecisionGraphTrace)>(
         &mut self,
-        g: &mut StableDiDecisionGraph,
+        graph: &mut GraphView,
         mut on_trace: Option<F>,
     ) -> Option<NodeIndex> {
-        let start = Instant::now();
+        // MobileSentrix: the clock is read only for a trace (upstream reads it on every call).
+        let start = on_trace.is_some().then(Instant::now);
         if self.iter >= ITER_MAX {
             return None;
         }
         // Take an unvisited element and find which of its neighbors are next
         while let Some(nid) = self.to_visit.pop() {
+            let g: &GraphView = graph;
             if self.ordered.is_visited(&nid) {
                 continue;
             }
@@ -164,27 +213,38 @@ impl GraphWalker {
 
             self.ordered.visit(nid);
 
-            let decision_node = g.node_weight(nid)?.clone();
-            if let DecisionNodeKind::SwitchNode { content } = &decision_node.kind {
+            // MobileSentrix: only a switch node needs its weight past this point; other nodes
+            // (revisited after every switch's reset) do not clone and drop the shared Arc.
+            let is_switch = matches!(
+                g.node_weight(nid)?.kind,
+                DecisionNodeKind::SwitchNode { .. }
+            );
+            let decision_node = match is_switch {
+                true => g.node_weight(nid).cloned(),
+                false => None,
+            };
+            if let Some(DecisionNodeKind::SwitchNode { content }) =
+                decision_node.as_deref().map(|node| &node.kind)
+            {
+                let decision_node = decision_node.as_deref().expect("switch node weight");
                 if !self.visited_switch_nodes.contains(&nid) {
                     let (input, input_trace) = self.incoming_node_data(g, nid);
-                    let mut isolate = Isolate::with_environment(input);
-                    if let Some(nodes) = self.nodes_context() {
+                    let mut isolate =
+                        Isolate::with_environment(input).with_cache(self.compiled_cache.clone());
+                    if let Some(nodes) = self.nodes_context_for(&decision_node.id) {
                         isolate.set_local(Variable::nodes_key(), nodes);
                     }
 
                     let mut statement_iter = content.statements.iter();
-                    let valid_statements: Vec<SwitchStatementTraceRow> = match content.hit_policy {
+                    // MobileSentrix: the matching statements by reference; trace rows (which
+                    // clone their ids) are built only for a trace.
+                    let valid_statements: Vec<&SwitchStatement> = match content.hit_policy {
                         SwitchStatementHitPolicy::First => statement_iter
                             .find(|&s| switch_statement_evaluate(&mut isolate, &s))
                             .into_iter()
-                            .cloned()
-                            .map(SwitchStatementTraceRow::from)
                             .collect(),
                         SwitchStatementHitPolicy::Collect => statement_iter
                             .filter(|&s| switch_statement_evaluate(&mut isolate, &s))
-                            .cloned()
-                            .map(SwitchStatementTraceRow::from)
                             .collect(),
                     };
 
@@ -197,10 +257,17 @@ impl GraphWalker {
                             input: input_trace,
                             output,
                             order: 0,
-                            performance: Some(Arc::from(format!("{:.1?}", start.elapsed()))),
+                            performance: Some(Arc::from(format!(
+                                "{:.1?}",
+                                start.map(|s| s.elapsed()).unwrap_or_default()
+                            ))),
+                            error: None,
                             trace_data: Some(
                                 SwitchStatementTrace {
-                                    statements: valid_statements.clone(),
+                                    statements: valid_statements
+                                        .iter()
+                                        .map(|s| SwitchStatementTraceRow::from((*s).clone()))
+                                        .collect(),
                                 }
                                 .to_variable(),
                             ),
@@ -221,19 +288,19 @@ impl GraphWalker {
                         .collect();
                     let edges_remove_count = edges_to_remove.len();
                     for edge in edges_to_remove {
-                        remove_edge_recursive(g, edge);
+                        graph.remove_edge_recursive(edge);
                     }
 
                     self.visited_switch_nodes.push(nid);
                     // Reset the graph if whole branch has been removed
                     if edges_remove_count > 0 {
-                        self.reset(g);
+                        self.reset(graph);
                         continue;
                     }
                 }
             }
 
-            let successors = g.neighbors_directed(nid, Outgoing);
+            let successors = graph.neighbors_directed(nid, Outgoing);
             self.to_visit.extend(successors);
 
             return Some(nid);
@@ -242,16 +309,42 @@ impl GraphWalker {
         None
     }
 
-    fn all_dependencies_resolved(&self, g: &StableDiDecisionGraph, nid: NodeIndex) -> bool {
+    /// MobileSentrix: the input `incoming_node_data` will give `node_id`, built before the walk
+    /// reaches it: an incoming node's output comes from this walk or, for a node run ahead of
+    /// it, from `early`. Merged in the same order, so once every incoming node has an output
+    /// it is the same value. `None` while an incoming node has no output yet.
+    pub fn incoming_node_data_with<'a>(
+        &'a self,
+        g: &GraphView,
+        node_id: NodeIndex,
+        early: impl Fn(NodeIndex) -> Option<&'a Variable>,
+    ) -> Option<Variable> {
+        let mut incoming = Vec::new();
+        for nid in g.neighbors_directed(node_id, Incoming) {
+            incoming.push(
+                self.node_data
+                    .get(&nid)
+                    .map(|nd| &nd.data)
+                    .or_else(|| early(nid))?,
+            );
+        }
+        let mut incoming = incoming.into_iter();
+        let Some(first) = incoming.next() else {
+            return Some(Variable::empty_object());
+        };
+        let head = match first {
+            Variable::Object(_) | Variable::Array(_) => first.clone(),
+            _ => Variable::empty_object(),
+        };
+        Some(incoming.fold(head, |mut prev, data| prev.merge_clone(data)))
+    }
+
+    fn all_dependencies_resolved(&self, g: &GraphView, nid: NodeIndex) -> bool {
         g.neighbors_directed(nid, Incoming)
             .all(|dep| self.ordered.is_visited(&dep))
     }
 
-    fn get_unresolved_dependencies(
-        &self,
-        g: &StableDiDecisionGraph,
-        nid: NodeIndex,
-    ) -> Vec<NodeIndex> {
+    fn get_unresolved_dependencies(&self, g: &GraphView, nid: NodeIndex) -> Vec<NodeIndex> {
         g.neighbors_directed(nid, Incoming)
             .filter(|dep| !self.ordered.is_visited(dep))
             .collect()
@@ -266,32 +359,6 @@ fn switch_statement_evaluate(isolate: &mut Isolate, switch_statement: &SwitchSta
     isolate
         .run_standard(switch_statement.condition.deref())
         .map_or(false, |v| v.as_bool().unwrap_or(false))
-}
-
-fn remove_edge_recursive(g: &mut StableDiDecisionGraph, edge_id: EdgeIndex) {
-    let Some((source_nid, target_nid)) = g.edge_endpoints(edge_id) else {
-        return;
-    };
-
-    g.remove_edge(edge_id);
-
-    for (nid, direction) in [(target_nid, Incoming), (source_nid, Outgoing)] {
-        let count = g.edges_directed(nid, direction).count();
-        if count.is_zero() {
-            let edge_ids: Vec<EdgeIndex> = g
-                .edges_directed(nid, direction.opposite())
-                .map(|edge| edge.id())
-                .collect();
-
-            edge_ids.iter().for_each(|&edge_id| {
-                remove_edge_recursive(g, edge_id);
-            });
-
-            if g.edges(nid).count().is_zero() {
-                g.remove_node(nid);
-            }
-        }
-    }
 }
 
 #[derive(ToVariable)]

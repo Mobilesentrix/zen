@@ -1,3 +1,4 @@
+use std::rc::Rc;
 pub mod http_handler;
 pub mod sleep;
 pub(crate) mod v1;
@@ -24,7 +25,7 @@ impl NodeHandler for FunctionNodeHandler {
     type TraceData = FunctionNodeTrace;
 
     async fn handle(&self, ctx: NodeContext<Self::NodeData, Self::TraceData>) -> NodeResult {
-        match &ctx.node {
+        match ctx.node.as_ref() {
             FunctionNodeContent::Version1(source) => {
                 let v1_context = NodeContext::<Arc<str>, FunctionV1Trace> {
                     id: ctx.id.clone(),
@@ -35,7 +36,7 @@ impl NodeHandler for FunctionNodeHandler {
                     trace: ctx.config.trace.then(|| Default::default()),
                     iteration: ctx.iteration,
                     config: ctx.config,
-                    node: source.clone(),
+                    node: Rc::new(source.clone()),
                 };
 
                 FunctionV1NodeHandler.handle(v1_context).await
@@ -50,7 +51,7 @@ impl NodeHandler for FunctionNodeHandler {
                     trace: ctx.config.trace.then(|| Default::default()),
                     iteration: ctx.iteration,
                     config: ctx.config,
-                    node: content.clone(),
+                    node: Rc::new(content.clone()),
                 };
 
                 FunctionV2NodeHandler.handle(v2_context).await

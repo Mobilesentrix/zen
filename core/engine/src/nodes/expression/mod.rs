@@ -1,10 +1,10 @@
 use crate::model::ExpressionNodeContent;
 use crate::nodes::result::NodeResult;
-use ahash::HashMap;
 use std::rc::Rc;
 
-use crate::nodes::context::{NodeContext, NodeContextExt};
+use crate::nodes::context::NodeContext;
 use crate::nodes::definition::NodeHandler;
+use crate::nodes::failure::{FailedNode, FailurePart, NodeFailure};
 use zen_expression::variable::{ToVariable, Variable};
 use zen_types::decision::TransformAttributes;
 
@@ -12,7 +12,7 @@ use zen_types::decision::TransformAttributes;
 pub struct ExpressionNodeHandler;
 
 pub type ExpressionNodeData = ExpressionNodeContent;
-pub type ExpressionNodeTrace = HashMap<Rc<str>, ExpressionNodeTraceItem>;
+pub type ExpressionNodeTrace = crate::decision_graph::TraceMap<Rc<str>, ExpressionNodeTraceItem>;
 
 impl NodeHandler for ExpressionNodeHandler {
     type NodeData = ExpressionNodeData;
@@ -34,11 +34,26 @@ impl NodeHandler for ExpressionNodeHandler {
                 continue;
             }
 
-            let value = isolate
-                .run_standard(&expression.value)
-                .with_node_context(&ctx, |_| {
-                    format!(r#"Failed to evaluate expression: "{}""#, &expression.value)
-                })?;
+            let value = match isolate.run_standard(&expression.value) {
+                Ok(value) => value,
+                Err(error) => {
+                    let message =
+                        format!(r#"Failed to evaluate expression: "{}""#, expression.value);
+                    if !ctx.config.trace {
+                        return ctx.error(message);
+                    }
+                    // MobileSentrix: traced, the failing node's trace entry says what failed.
+                    let failure = NodeFailure::expression(
+                        FailurePart::Expression,
+                        &expression.value,
+                        &error,
+                        &ctx.input_with_nodes(),
+                        Some(&result),
+                    )
+                    .with_key(&*expression.key);
+                    return ctx.error(FailedNode::new(failure, message));
+                }
+            };
             let value = match expression.value.contains('$') {
                 true => value.deep_clone(),
                 false => value,

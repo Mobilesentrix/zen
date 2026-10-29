@@ -13,6 +13,8 @@ doctest = false
 
 [dependencies]
 ahash = { workspace = true }
+indexmap = { version = "2", features = ["serde"] }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 anyhow = { workspace = true }
 base64 = "0.22"
 thiserror = { workspace = true }

@@ -6,16 +6,22 @@ license = "MIT"
 publish = false
 
 [dependencies]
+ahash = { workspace = true }
 anyhow = { workspace = true }
+hashlink = "0.10"
 libc = "0.2"
+mimalloc = { version = "0.1", default-features = false, features = ["no_thp"] }  # MobileSentrix: see src/ms_alloc.rs
 serde = { workspace = true }
 serde_json = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["rt"] }
 zen-engine = { path = "../../core/engine", features = ["arbitrary_precision"] }
 zen-expression = { path = "../../core/expression", features = ["arbitrary_precision"] }
 zen-tmpl = { path = "../../core/template" }
+zen-types = { path = "../../core/types", features = ["arbitrary_precision"] }
+rust_decimal = { workspace = true }
+ms-zen-database = { path = "../../ms/database", features = ["arbitrary_precision"] }
 
 [lib]
 crate-type = ["staticlib"]

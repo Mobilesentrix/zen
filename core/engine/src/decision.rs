@@ -83,6 +83,7 @@ impl Decision {
                 http_handler: self.http_handler.clone(),
                 compiled_cache: self.content.compiled_cache.clone(),
                 dt_indexes: self.content.dt_indexes.clone(),
+                dt_cells: self.content.dt_cells.clone(),
                 stripped_functions: self.content.stripped_functions.clone(),
                 validator_cache: Arc::new(OnceCell::from(self.content.validator_cache.clone())),
                 ..Default::default()

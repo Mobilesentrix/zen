@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::hash::Hasher;
+use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use thiserror::Error;
@@ -27,11 +28,15 @@ where
 {
     pub id: Arc<str>,
     pub name: Arc<str>,
-    pub node: NodeData,
+    /// MobileSentrix: the node's content behind an `Rc`: a context is cloned for every item of a
+    /// loop-mode node, and an owned content would clone its shared `Arc`s each time.
+    pub node: Rc<NodeData>,
     pub input: Variable,
     pub nodes: Option<Variable>,
     pub trace: Option<RefCell<TraceData>>,
-    pub extensions: NodeHandlerExtensions,
+    /// MobileSentrix: shared per evaluation (`Rc`), so a node context clones one counter that
+    /// only this thread touches instead of every extension's `Arc`.
+    pub extensions: Rc<NodeHandlerExtensions>,
     pub iteration: u8,
     pub config: NodeContextConfig,
 }
@@ -63,12 +68,12 @@ where
             extensions: base.extensions,
             iteration: base.iteration,
             trace: base.config.trace.then(|| Default::default()),
-            node: data,
+            node: Rc::new(data),
             config: base.config,
         }
     }
 
-    pub fn isolate(&self) -> Isolate {
+    pub fn isolate(&self) -> PooledIsolate {
         make_isolate(&self.input, self.nodes.as_ref(), &self.extensions)
     }
 
@@ -122,7 +127,14 @@ where
 
         let current = value.deep_clone();
         let mut removed: HashSet<String> = HashSet::default();
+        let mut first = true;
         loop {
+            // MobileSentrix: after a round of removals, "no errors left" is checked with
+            // is_valid instead of collecting every error of the (usually now valid) value.
+            if !first && validator.is_valid(VariableNode::new(&current, &Guards::default())) {
+                return Ok(());
+            }
+            first = false;
             let guards = Guards::default();
             let paths: Vec<String> = validator
                 .iter_errors(VariableNode::new(&current, &guards))
@@ -320,28 +332,88 @@ pub struct NodeContextBase {
     pub input: Variable,
     pub nodes: Option<Variable>,
     pub iteration: u8,
-    pub extensions: NodeHandlerExtensions,
+    pub extensions: Rc<NodeHandlerExtensions>,
     pub config: NodeContextConfig,
     pub trace: Option<RefCell<Variable>>,
+}
+
+thread_local! {
+    /// MobileSentrix: isolates kept for reuse on this thread. A node (and, in loop mode, every
+    /// item of it) would otherwise build a fresh isolate with fresh lexer/compiler/VM/arena buffers.
+    static ISOLATES: RefCell<Vec<Isolate>> = const { RefCell::new(Vec::new()) };
+}
+
+const POOLED_ISOLATES: usize = 8;
+
+/// An isolate borrowed from this thread's pool; it goes back (emptied) when dropped.
+pub struct PooledIsolate(Option<Isolate>);
+
+impl std::ops::Deref for PooledIsolate {
+    type Target = Isolate;
+
+    fn deref(&self) -> &Isolate {
+        self.0
+            .as_ref()
+            .expect("pooled isolate is present until dropped")
+    }
+}
+
+impl std::ops::DerefMut for PooledIsolate {
+    fn deref_mut(&mut self) -> &mut Isolate {
+        self.0
+            .as_mut()
+            .expect("pooled isolate is present until dropped")
+    }
+}
+
+impl Drop for PooledIsolate {
+    fn drop(&mut self) {
+        let Some(mut isolate) = self.0.take() else {
+            return;
+        };
+        isolate.release();
+        // try_with: during thread teardown the isolate is simply dropped.
+        let _ = ISOLATES.try_with(|pool| {
+            if let Ok(mut pool) = pool.try_borrow_mut() {
+                if pool.len() < POOLED_ISOLATES {
+                    pool.push(isolate);
+                }
+            }
+        });
+    }
 }
 
 pub(crate) fn make_isolate(
     input: &Variable,
     nodes: Option<&Variable>,
     extensions: &NodeHandlerExtensions,
-) -> Isolate {
-    let mut isolate =
-        Isolate::with_environment(input.clone()).with_cache(extensions.compiled_cache.clone());
+) -> PooledIsolate {
+    let pooled = ISOLATES
+        .try_with(|pool| pool.try_borrow_mut().ok().and_then(|mut pool| pool.pop()))
+        .ok()
+        .flatten();
+    let mut isolate = pooled.unwrap_or_else(Isolate::new);
+    isolate.reset(input.clone(), extensions.compiled_cache.as_ref());
     if let Some(nodes) = nodes {
         isolate.set_local(Variable::nodes_key(), nodes.clone());
     }
 
-    isolate
+    PooledIsolate(Some(isolate))
 }
 
 impl NodeContextBase {
-    pub fn isolate(&self) -> Isolate {
+    pub fn isolate(&self) -> PooledIsolate {
         make_isolate(&self.input, self.nodes.as_ref(), &self.extensions)
+    }
+
+    /// The input as the isolate sees it (`$nodes` included when present).
+    pub fn input_with_nodes(&self) -> Variable {
+        let (Some(nodes), Variable::Object(object)) = (&self.nodes, &self.input) else {
+            return self.input.shallow_clone();
+        };
+        let mut map = object.borrow().clone();
+        map.insert(Variable::nodes_key(), nodes.clone());
+        Variable::from_object(map)
     }
 
     pub fn error<Error>(&self, error: Error) -> NodeResult
@@ -444,7 +516,7 @@ impl<T> NodeContextExt<T, NodeContextBase> for Option<T> {
 
 #[derive(Debug, Serialize, Error)]
 #[serde(rename_all = "camelCase")]
-struct ValidationErrorJson {
+pub(crate) struct ValidationErrorJson {
     path: String,
     message: String,
 }

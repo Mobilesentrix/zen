@@ -1,0 +1,32 @@
+[package]
+name = "ms-zen-ffi-rlib"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Profiling only: the zen-ffi sources (bindings/c) built as an rlib so ms-speedbench can link them. The shipped libzen_ffi stays a staticlib (an rlib crate type beside it would defeat LTO)."
+
+[lib]
+path = "../../../bindings/c/src/lib.rs"
+crate-type = ["rlib"]
+
+[features]
+# Declared so the shared sources' `cfg(feature = "go")` items are known; never enabled here.
+go = []
+
+[dependencies]
+ahash = { workspace = true }
+anyhow = { workspace = true }
+hashlink = "0.10"
+libc = "0.2"
+mimalloc = { version = "0.1", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+tokio-util = { workspace = true, features = ["rt"] }
+zen-engine = { path = "../../../core/engine", features = ["arbitrary_precision"] }
+zen-expression = { path = "../../../core/expression", features = ["arbitrary_precision"] }
+zen-tmpl = { path = "../../../core/template" }
+zen-types = { path = "../../../core/types", features = ["arbitrary_precision"] }
+rust_decimal = { workspace = true }
+ms-zen-database = { path = "../../database", features = ["arbitrary_precision"] }

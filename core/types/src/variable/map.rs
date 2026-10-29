@@ -1,6 +1,6 @@
 use crate::symbol::Symbol;
 use crate::variable::Variable;
-use ahash::{HashMap, HashMapExt};
+use indexmap::IndexMap;
 use smallvec::SmallVec;
 use std::fmt::{Debug, Formatter};
 
@@ -10,10 +10,15 @@ const SPILL_AT: usize = 32;
 
 type Entries = SmallVec<[(Symbol, Variable); INLINE]>;
 
+/// MobileSentrix: the large form keeps insertion order (IndexMap) like the small one. Upstream
+/// uses a hash map with a per-instance random seed, so an object with more than SPILL_AT keys
+/// serialises in a different key order on every run.
+type LargeMap = IndexMap<Symbol, Variable, ahash::RandomState>;
+
 #[derive(Clone)]
 enum Repr {
     Small(Entries),
-    Large(HashMap<Symbol, Variable>),
+    Large(LargeMap),
 }
 
 #[derive(Clone)]
@@ -24,9 +29,27 @@ impl VariableMap {
         Self(Repr::Small(SmallVec::new()))
     }
 
+    /// MobileSentrix: a map from entries whose keys are known to be distinct, without the
+    /// per-insert key search (quadratic up to `SPILL_AT` entries). Same contents and, for a
+    /// small map, the same entry order as inserting them one by one.
+    pub fn from_unique_entries(entries: Vec<(Symbol, Variable)>) -> Self {
+        debug_assert!({
+            let mut keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+            keys.sort_unstable();
+            keys.windows(2).all(|w| w[0] != w[1])
+        });
+        match entries.len() > SPILL_AT {
+            true => Self(Repr::Large(entries.into_iter().collect())),
+            false => Self(Repr::Small(SmallVec::from_vec(entries))),
+        }
+    }
+
     pub fn with_capacity(capacity: usize) -> Self {
         match capacity > SPILL_AT {
-            true => Self(Repr::Large(HashMap::with_capacity(capacity))),
+            true => Self(Repr::Large(LargeMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            ))),
             false => Self(Repr::Small(SmallVec::with_capacity(capacity))),
         }
     }
@@ -105,7 +128,7 @@ impl VariableMap {
                 .iter()
                 .position(|(k, _)| k.as_str() == key)
                 .map(|index| entries.remove(index).1),
-            Repr::Large(map) => map.remove(key),
+            Repr::Large(map) => map.shift_remove(key),
         }
     }
 
@@ -135,7 +158,7 @@ impl VariableMap {
                 .iter()
                 .position(|(k, _)| k.as_str() == key.as_str())
                 .map(|index| entries.remove(index).1),
-            Repr::Large(map) => map.remove(key),
+            Repr::Large(map) => map.shift_remove(key),
         }
     }
 
@@ -143,7 +166,7 @@ impl VariableMap {
         let Repr::Small(entries) = &mut self.0 else {
             return;
         };
-        let mut map = HashMap::with_capacity(entries.len() * 2);
+        let mut map = LargeMap::with_capacity_and_hasher(entries.len() * 2, Default::default());
         for (key, value) in entries.drain(..) {
             map.insert(key, value);
         }
@@ -250,7 +273,7 @@ impl<'a> VacantEntry<'a> {
 
 pub enum Iter<'a> {
     Small(std::slice::Iter<'a, (Symbol, Variable)>),
-    Large(std::collections::hash_map::Iter<'a, Symbol, Variable>),
+    Large(indexmap::map::Iter<'a, Symbol, Variable>),
 }
 
 impl<'a> Iterator for Iter<'a> {
@@ -273,7 +296,7 @@ impl<'a> Iterator for Iter<'a> {
 
 pub enum IterMut<'a> {
     Small(std::slice::IterMut<'a, (Symbol, Variable)>),
-    Large(std::collections::hash_map::IterMut<'a, Symbol, Variable>),
+    Large(indexmap::map::IterMut<'a, Symbol, Variable>),
 }
 
 impl<'a> Iterator for IterMut<'a> {
@@ -289,7 +312,7 @@ impl<'a> Iterator for IterMut<'a> {
 
 pub enum IntoIter {
     Small(smallvec::IntoIter<[(Symbol, Variable); INLINE]>),
-    Large(std::collections::hash_map::IntoIter<Symbol, Variable>),
+    Large(indexmap::map::IntoIter<Symbol, Variable>),
 }
 
 impl Iterator for IntoIter {

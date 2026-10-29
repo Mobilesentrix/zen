@@ -112,6 +112,35 @@ where
     }
 }
 
+/// MobileSentrix: insertion-ordered maps (traces) keep their order in the variable.
+impl<V, S> ToVariable for indexmap::IndexMap<Rc<str>, V, S>
+where
+    V: ToVariable,
+    S: std::hash::BuildHasher,
+{
+    fn to_variable(&self) -> Variable {
+        Variable::from_object(
+            self.iter()
+                .map(|(k, v)| (crate::symbol::Symbol::from(k.as_ref()), v.to_variable()))
+                .collect(),
+        )
+    }
+}
+
+impl<V, S> ToVariable for indexmap::IndexMap<Arc<str>, V, S>
+where
+    V: ToVariable,
+    S: std::hash::BuildHasher,
+{
+    fn to_variable(&self) -> Variable {
+        Variable::from_object(
+            self.iter()
+                .map(|(k, v)| (crate::symbol::Symbol::from(k.deref()), v.to_variable()))
+                .collect(),
+        )
+    }
+}
+
 impl<V, S> ToVariable for HashMap<String, V, S>
 where
     V: ToVariable,

@@ -1,3 +1,4 @@
+use crate::decision_graph::TraceMap;
 use crate::nodes::definition::NodeHandler;
 use crate::nodes::result::NodeResult;
 use crate::nodes::{NodeContext, NodeResponse};
@@ -14,7 +15,10 @@ use zen_types::decision::{
     DecisionTableContent, DecisionTableHitPolicy, DecisionTableInputField, TransformAttributes,
 };
 use zen_types::variable::Variable;
+pub(crate) mod cells;
 pub(crate) mod index;
+
+use cells::CompiledCells;
 
 #[derive(Debug, Clone)]
 pub struct DecisionTableNodeHandler;
@@ -61,7 +65,7 @@ impl DecisionTableNodeHandler {
                 }
                 let pruned = pruner.map(|ix| (ix, row_idx));
                 if let Some(RowResult::Output(output)) =
-                    self.evaluate_row(&ctx, rule, &mut isolate, pruned)
+                    self.evaluate_row(&ctx, rule, row_idx, &mut isolate, pruned)
                 {
                     return ctx.success(output);
                 }
@@ -73,7 +77,7 @@ impl DecisionTableNodeHandler {
         }
 
         let hit = ctx.node.rules.iter().enumerate().find_map(|(index, rule)| {
-            match self.evaluate_row(&ctx, rule, &mut isolate, None)? {
+            match self.evaluate_row(&ctx, rule, index, &mut isolate, None)? {
                 RowResult::WithTrace {
                     output,
                     reference_map,
@@ -120,7 +124,7 @@ impl DecisionTableNodeHandler {
                 continue;
             }
             let pruned = pruner.map(|ix| (ix, index));
-            if let Some(result) = self.evaluate_row(&ctx, rule, &mut isolate, pruned) {
+            if let Some(result) = self.evaluate_row(&ctx, rule, index, &mut isolate, pruned) {
                 match result {
                     RowResult::Output(output) => {
                         outputs.push(output);
@@ -176,6 +180,24 @@ impl DecisionTableNodeHandler {
 
     fn table_index(ctx: &DecisionTableContext) -> Option<&TableIndex> {
         ctx.extensions.dt_indexes.as_ref()?.get(&ctx.id)
+    }
+
+    fn table_cells(ctx: &DecisionTableContext) -> Option<&CompiledCells> {
+        ctx.extensions.dt_cells.as_ref()?.get(&ctx.id)
+    }
+
+    /// Runs a standard cell: its compiled bytecode when the decision was compiled, else by
+    /// source text (same result: the bytecode is the opcode cache's entry for that text).
+    #[inline]
+    fn run_cell(
+        isolate: &mut Isolate,
+        compiled: Option<&cells::Bytecode>,
+        source: &str,
+    ) -> Result<Variable, zen_expression::IsolateError> {
+        match compiled {
+            Some(code) => isolate.run_compiled(code),
+            None => isolate.run_standard(source),
+        }
     }
 
     fn candidate_rows(
@@ -239,12 +261,12 @@ impl DecisionTableNodeHandler {
                 continue;
             }
             let pruned = pruner.map(|ix| (ix, row_idx));
-            if !Self::row_matches(&ctx, rule, &mut isolate, pruned) {
+            if !Self::row_matches(&ctx, rule, row_idx, &mut isolate, pruned) {
                 continue;
             }
 
             let Some((row_scalars, row_collects)) =
-                Self::evaluate_row_cells(&ctx, rule, &mut isolate, scalars.is_none())
+                Self::evaluate_row_cells(&ctx, rule, row_idx, &mut isolate, scalars.is_none())
             else {
                 continue;
             };
@@ -292,9 +314,11 @@ impl DecisionTableNodeHandler {
     fn row_matches(
         ctx: &DecisionTableContext,
         rule: &HashMap<Arc<str>, Arc<str>>,
+        row_idx: usize,
         isolate: &mut Isolate,
         pruned: Option<(&TableIndex, usize)>,
     ) -> bool {
+        let cells = Self::table_cells(ctx);
         for (col_idx, input) in ctx.node.inputs.iter().enumerate() {
             if pruned.is_some_and(|(ix, row_idx)| ix.decides(col_idx, row_idx)) {
                 continue;
@@ -306,15 +330,19 @@ impl DecisionTableNodeHandler {
                 continue;
             }
 
+            let compiled = cells.and_then(|c| c.input(row_idx, col_idx));
             let passed = match &input.field {
-                None => isolate
-                    .run_standard(rule_value)
+                None => Self::run_cell(isolate, compiled, rule_value)
                     .ok()
                     .and_then(|result| result.as_bool())
                     .unwrap_or(false),
                 Some(field) => {
                     isolate.set_reference(field).is_ok()
-                        && isolate.run_unary(rule_value).unwrap_or(false)
+                        && match compiled {
+                            Some(code) => isolate.run_unary_compiled(code),
+                            None => isolate.run_unary(rule_value),
+                        }
+                        .unwrap_or(false)
                 }
             };
             if !passed {
@@ -327,9 +355,11 @@ impl DecisionTableNodeHandler {
     fn evaluate_row_cells(
         ctx: &DecisionTableContext,
         rule: &HashMap<Arc<str>, Arc<str>>,
+        row_idx: usize,
         isolate: &mut Isolate,
         include_scalars: bool,
     ) -> Option<(Option<Variable>, Vec<(usize, Variable)>)> {
+        let cells = Self::table_cells(ctx);
         let scalars = include_scalars.then(Variable::empty_object);
         let mut collects = Vec::new();
         for (column_idx, output) in ctx.node.outputs.iter().enumerate() {
@@ -344,7 +374,10 @@ impl DecisionTableNodeHandler {
                 continue;
             }
 
-            let value = isolate.run_standard(rule_value).ok()?.deep_clone();
+            let compiled = cells.and_then(|c| c.output(row_idx, column_idx));
+            let value = Self::run_cell(isolate, compiled, rule_value)
+                .ok()?
+                .deep_clone();
             if collect {
                 collects.push((column_idx, value));
             } else if let Some(scalars) = &scalars {
@@ -358,7 +391,7 @@ impl DecisionTableNodeHandler {
         ctx: &DecisionTableContext,
         rule: &HashMap<Arc<str>, Arc<str>>,
         isolate: &mut Isolate,
-    ) -> (HashMap<Rc<str>, Variable>, HashMap<Rc<str>, Rc<str>>) {
+    ) -> (TraceMap<Rc<str>, Variable>, TraceMap<Rc<str>, Rc<str>>) {
         let id_str = Rc::<str>::from("_id");
         let description_str = Rc::<str>::from("_description");
 
@@ -367,8 +400,8 @@ impl DecisionTableNodeHandler {
             None => Rc::from(""),
         };
 
-        let mut expressions: HashMap<Rc<str>, Rc<str>> = Default::default();
-        let mut reference_map: HashMap<Rc<str>, Variable> = Default::default();
+        let mut expressions: TraceMap<Rc<str>, Rc<str>> = Default::default();
+        let mut reference_map: TraceMap<Rc<str>, Variable> = Default::default();
 
         expressions.insert(id_str.clone(), rule_id.clone());
         if let Some(description) = rule.get(description_str.as_ref()) {
@@ -403,15 +436,17 @@ impl DecisionTableNodeHandler {
         &self,
         ctx: &'a DecisionTableContext,
         rule: &'a HashMap<Arc<str>, Arc<str>>,
+        row_idx: usize,
         isolate: &mut Isolate,
         pruned: Option<(&TableIndex, usize)>,
     ) -> Option<RowResult> {
-        if !Self::row_matches(ctx, rule, isolate, pruned) {
+        if !Self::row_matches(ctx, rule, row_idx, isolate, pruned) {
             return None;
         }
 
+        let cells = Self::table_cells(ctx);
         let outputs = Variable::empty_object();
-        for output in ctx.node.outputs.iter() {
+        for (column_idx, output) in ctx.node.outputs.iter().enumerate() {
             let (path, _) = output.write_path();
             if path.is_empty() {
                 continue;
@@ -423,7 +458,8 @@ impl DecisionTableNodeHandler {
                 continue;
             }
 
-            let res = isolate.run_standard(rule_value).ok()?;
+            let compiled = cells.and_then(|c| c.output(row_idx, column_idx));
+            let res = Self::run_cell(isolate, compiled, rule_value).ok()?;
             outputs.dot_insert(path, res.deep_clone());
         }
 
@@ -444,16 +480,16 @@ enum RowResult {
     Output(Variable),
     WithTrace {
         output: Variable,
-        reference_map: HashMap<Rc<str>, Variable>,
-        rule: HashMap<Rc<str>, Rc<str>>,
+        reference_map: TraceMap<Rc<str>, Variable>,
+        rule: TraceMap<Rc<str>, Rc<str>>,
     },
 }
 
 #[derive(Debug, Clone, Serialize, ToVariable)]
 pub struct DecisionTableRowTrace {
     index: usize,
-    reference_map: HashMap<Rc<str>, Variable>,
-    rule: HashMap<Rc<str>, Rc<str>>,
+    reference_map: TraceMap<Rc<str>, Variable>,
+    rule: TraceMap<Rc<str>, Rc<str>>,
 }
 
 #[derive(Debug, Clone, Serialize, ToVariable)]

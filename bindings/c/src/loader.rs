@@ -1,4 +1,4 @@
-use std::ffi::{c_char, CString};
+use std::ffi::c_char;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -29,6 +29,19 @@ impl Default for DynamicDecisionLoader {
     }
 }
 
+impl DynamicDecisionLoader {
+    /// A loader that calls back into the embedder (Go / native C). It cannot enumerate its
+    /// keys, so the engine's compiled set never covers it; `ZenEngine` caches what it returns.
+    pub(crate) fn is_callback(&self) -> bool {
+        match self {
+            DynamicDecisionLoader::Native(_) => true,
+            #[cfg(feature = "go")]
+            DynamicDecisionLoader::Go(_) => true,
+            DynamicDecisionLoader::Noop(_) | DynamicDecisionLoader::Config(_) => false,
+        }
+    }
+}
+
 impl DecisionLoader for DynamicDecisionLoader {
     fn load<'a>(
         &'a self,
@@ -43,6 +56,22 @@ impl DecisionLoader for DynamicDecisionLoader {
                 DynamicDecisionLoader::Go(loader) => loader.load(key).await,
             }
         })
+    }
+
+    // `keys` and `load_sync` are what `DecisionEngine::compile()` builds the compiled set
+    // from; a wrapper that hides them silently disables the cache for every engine.
+    fn keys(&self) -> Option<Vec<Arc<str>>> {
+        match self {
+            DynamicDecisionLoader::Config(loader) => loader.keys(),
+            _ => None,
+        }
+    }
+
+    fn load_sync(&self, key: &str) -> Option<LoaderResponse> {
+        match self {
+            DynamicDecisionLoader::Config(loader) => loader.load_sync(key),
+            _ => None,
+        }
     }
 }
 
@@ -106,7 +135,7 @@ pub struct ZenDecisionLoaderResult {
 impl ZenDecisionLoaderResult {
     pub fn into_loader_response(self, key: &str) -> LoaderResponse {
         let maybe_error = match self.error.is_null() {
-            false => Some(unsafe { CString::from_raw(self.error) }),
+            false => Some(unsafe { crate::ms_alloc::take_malloc_c_string(self.error) }),
             true => None,
         };
 
@@ -119,7 +148,7 @@ impl ZenDecisionLoaderResult {
         }
 
         let maybe_content = match self.content.is_null() {
-            false => Some(unsafe { CString::from_raw(self.content) }),
+            false => Some(unsafe { crate::ms_alloc::take_malloc_c_string(self.content) }),
             true => None,
         };
 
@@ -135,5 +164,39 @@ impl ZenDecisionLoaderResult {
             })?;
 
         Ok(Arc::new(decision_content))
+    }
+}
+
+#[cfg(test)]
+impl ZenDecisionLoaderResult {
+    /// Test helper standing in for a native/Go loader callback returning `content`.
+    pub(crate) fn from_content(content: &str) -> Self {
+        Self {
+            content: crate::ms_alloc::malloc_c_string(content.as_bytes()),
+            error: std::ptr::null_mut(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_loader_exposes_keys_and_sync_loads_through_the_dynamic_wrapper() {
+        let content = r#"{"g.json": {"nodes": [], "edges": []}}"#;
+        let loader = LoaderConfig::Static {
+            content: serde_json::from_str(content).unwrap(),
+        }
+        .into_loader()
+        .unwrap();
+        let dynamic = DynamicDecisionLoader::Config(loader);
+        assert_eq!(dynamic.keys().unwrap(), vec![Arc::from("g.json")]);
+        assert!(dynamic.load_sync("g.json").unwrap().is_ok());
+        assert!(dynamic.load_sync("missing.json").unwrap().is_err());
+        assert!(DynamicDecisionLoader::default().keys().is_none());
+        assert!(DynamicDecisionLoader::default()
+            .load_sync("g.json")
+            .is_none());
     }
 }
