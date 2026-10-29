@@ -1,5 +1,11 @@
 # ZEN Engine
 
+## This fork
+
+This is the MobileSentrix fork of gorules/zen, based on upstream `zen-engine-v2.1.6`. It adds a
+database node, a compiled-decision cache, parallel evaluation and a C API for Go embedding. What it
+adds, how to build it and how to update it from upstream: [FORK.md](FORK.md).
+
 **Business logic humans can read and machines can run.** One copy of your rules: the owner reads it, every system runs it.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
