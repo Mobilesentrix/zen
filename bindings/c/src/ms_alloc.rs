@@ -12,9 +12,7 @@
 //! run that purge. [`start_purger`] runs one background thread that collects once a second
 //! (`mi_collect(false)`: the purge of every arena range whose delay has expired, whichever thread
 //! freed it, plus that thread's own heap), so idle memory returns within about a second, while
-//! the evaluation path keeps mimalloc's default purge delay. Purging on the evaluation path
-//! instead (`MIMALLOC_PURGE_DELAY=0`, or collecting after each large evaluation) puts that cost
-//! on every evaluation.
+//! the evaluation path keeps mimalloc's default purge delay.
 //!
 //! Two further allocator defaults keep memory resident after a burst of large evaluations:
 //! * mimalloc v3 madvises its arenas `MADV_HUGEPAGE` by default. With transparent huge pages it
@@ -27,7 +25,7 @@
 //!   threshold at 1 MiB, so every response of 1 MiB or more is its own mapping, returned to the
 //!   OS by the caller's `free()` (and grown by `mremap`, without copying).
 //!
-//! The C contract is unchanged: memory this library hands to its caller is freed by the caller
+//! C contract: memory this library hands to its caller is freed by the caller
 //! with `free()`, and memory the caller hands over (loader / custom-node callback results) was
 //! allocated with `malloc()`. So every such buffer is allocated or released here with libc's
 //! `malloc` / `free`, never with the Rust global allocator.

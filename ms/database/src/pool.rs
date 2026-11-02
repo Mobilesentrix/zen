@@ -1,11 +1,11 @@
 //! Named connection pools plus the dedicated I/O runtime that drives them.
 //!
-//! Why a dedicated runtime: the engine evaluates on whatever executor the embedder uses
-//! (the C FFI evaluates inside `block_on` on many caller threads; batch evaluation uses a
-//! pool of thread-local runtimes; Rust embedders bring their own). sqlx sockets are
-//! registered with the reactor of the runtime they were opened on, so pools must live on a
-//! runtime that is always being driven. Queries are spawned onto it and the caller awaits
-//! the `JoinHandle`, which is executor-agnostic. Pools are created once per engine.
+//! The engine evaluates on whatever executor the embedder uses (the C FFI evaluates inside
+//! `block_on` on many caller threads; batch evaluation uses a pool of thread-local runtimes;
+//! Rust embedders bring their own). sqlx sockets are registered with the reactor of the
+//! runtime they were opened on, so pools live on a runtime that is always being driven.
+//! Queries are spawned onto it and the caller awaits the `JoinHandle`, which is
+//! executor-agnostic. Pools are created once per engine.
 
 use crate::bind::{BindValue, BoundQuery};
 use crate::config::{
@@ -433,8 +433,8 @@ impl Drop for Databases {
                     .name("ms-zen-db-shutdown".to_string())
                     .spawn(move || {
                         if let Ok(runtime) = rx.recv() {
-                            // The timer must be created inside the runtime context, hence
-                            // the async block rather than `timeout(..)` as the argument.
+                            // The timer must be created inside the runtime context, so the
+                            // timeout is built inside the async block.
                             let _ = runtime.block_on(async {
                                 tokio::time::timeout(SHUTDOWN_GRACE, close_all).await
                             });

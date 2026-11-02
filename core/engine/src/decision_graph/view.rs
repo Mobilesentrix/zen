@@ -1,8 +1,7 @@
 //! MobileSentrix: one evaluation's view of a decision's graph.
 //!
-//! Upstream builds a fresh `StableGraph` per evaluation and lets switch nodes delete the edges of
-//! the branches they did not take (and, recursively, nodes left without edges). Here every
-//! evaluation shares the decision's prepared graph and records those deletions in two bitsets.
+//! Every evaluation shares the decision's prepared graph and records the edges that switch nodes
+//! remove (the branches not taken, and recursively nodes left without edges) in two bitsets.
 //! Every query skips the deleted edges and nodes, so it answers exactly what the mutated graph
 //! answered: `StableGraph` keeps edge lists as linked lists, and removing an edge unlinks it
 //! without reordering the rest, so filtering the original lists yields the same sequence.

@@ -45,8 +45,8 @@ pub struct ZenCustomNodeResult {
 
 impl ZenCustomNodeResult {
     pub fn into_node_result(self) -> anyhow::Result<NodeResponse> {
-        // The callback allocated both strings with malloc (MS: freed with free, not with the
-        // Rust allocator; a content sent alongside an error is freed too instead of leaking).
+        // The callback allocated both strings with malloc: they are freed with free, not with the
+        // Rust allocator, and a content sent alongside an error is freed too.
         let maybe_error = match self.error.is_null() {
             false => Some(unsafe { take_malloc_c_string(self.error) }),
             true => None,

@@ -293,7 +293,7 @@ async fn a_branch_a_switch_drops_never_runs_or_records() {
 /// so it runs in walk order) } -> join -> response. Only one step may start early. When the walk
 /// takes `audit` first, the lookup started early waits beside it: starting early pays whenever a
 /// step has work beside it, not only when two concurrent steps are ready together. When the walk
-/// takes `lookup` first it simply waits for it, as before. `audit_first` swaps the edge order.
+/// takes `lookup` first it simply waits for it. `audit_first` swaps the edge order.
 fn one_early_step(sequential: bool, audit_first: bool) -> GraphContent {
     let nodes = vec![
         json!({ "id": "req", "name": "request", "type": "inputNode", "content": {} }),

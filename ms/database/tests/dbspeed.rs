@@ -411,7 +411,7 @@ async fn starrocks_short_circuit_study() {
 /// Attribution for the wide corpus query (api/stock-feed/products, 12 KB SQL, 24 placeholders,
 /// 56 rows): binary protocol with bound parameters (what the node does) vs the same statement
 /// with literal values over the text protocol (test only — the node never splices values),
-/// and the node path on top. Fixtures: ms-test/fixtures/wide{,-literal}.sql (untracked).
+/// and the node path on top. Fixtures: ms-test/fixtures/wide{,-literal}.sql.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs engine-v2/testdb (MS_TESTDB_STARROCKS_URL) and ms-test/fixtures/wide*.sql"]
 async fn starrocks_wide_query_protocols() {

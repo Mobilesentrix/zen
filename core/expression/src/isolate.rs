@@ -161,8 +161,8 @@ impl Isolate {
     }
 
     pub fn run_standard(&mut self, source: &str) -> Result<Variable, IsolateError> {
-        // MobileSentrix: run the cached bytecode in place (disjoint field borrows) instead of
-        // cloning its Arc, which cost two atomic updates of a counter every thread shares.
+        // MobileSentrix: run the cached bytecode in place (disjoint field borrows), so the
+        // Arc's shared counter is not updated.
         if let Some(codes) = self.cache.as_ref().and_then(|c| c.standard.get(source)) {
             return Ok(self.vm.run(codes, &self.scope)?);
         }

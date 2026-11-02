@@ -26,8 +26,7 @@ pub(crate) struct NodeData {
 }
 
 /// MobileSentrix: node outputs by node index in a dense vector (graph indices are dense and
-/// stable), instead of a hash map that hashed the index on every lookup, and the walker looks
-/// up every visited node again after each switch node resets the walk.
+/// stable). The walker looks up every visited node again after each switch node resets the walk.
 #[derive(Default)]
 pub(crate) struct NodeDataMap {
     slots: Vec<Option<NodeData>>,
