@@ -1,12 +1,16 @@
 //! Evaluates placeholders against the node input and turns the results into bind values.
 
-use crate::template::{Dialect, Guard, Piece, Placeholder, QueryTemplate, SlotKind};
+use crate::template::{Dialect, Guard, Piece, Placeholder, QueryTemplate, SlotKind, Term};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use zen_engine::nodes::failure::{isolate_kind, FailureKind};
+use zen_expression::variable::VariableMap;
 use zen_expression::vm::VM;
 use zen_expression::Variable;
+
+/// Keys a missing-key hint lists.
+const HINT_KEYS: usize = 10;
 
 /// Wire protocols cap a statement at 65 535 bind parameters (u16 count).
 pub const MAX_BIND_PARAMS: usize = u16::MAX as usize;
@@ -42,7 +46,7 @@ pub enum BindError {
         node_name: String,
         node_id: String,
         problem: String,
-        /// MobileSentrix error trace: what kind of failure this is (not part of the message).
+        /// What kind of failure this is, for the error trace (not part of the message).
         kind: FailureKind,
     },
     #[error("query expands to {count} bind parameters, more than the {MAX_BIND_PARAMS} the {protocol} protocol allows; narrow the query or batch it")]
@@ -57,7 +61,27 @@ enum Resolved {
     List(Vec<BindValue>),
 }
 
+impl Resolved {
+    /// How many bind markers this value takes.
+    fn width(&self) -> usize {
+        match self {
+            Resolved::Scalar(_) => 1,
+            Resolved::List(values) => values.len(),
+        }
+    }
+}
+
+/// Why a value has no single bind form.
+enum NotScalar {
+    Null,
+    Array,
+    Other(&'static str),
+}
+
 /// Evaluates every placeholder against `context` and produces the final SQL + params.
+///
+/// # Errors
+/// A placeholder fails to evaluate or has no bindable form, or the query needs too many parameters.
 pub fn bind(
     template: &QueryTemplate,
     context: &Variable,
@@ -70,48 +94,45 @@ pub fn bind(
     let mut resolved = Vec::with_capacity(template.placeholders().len());
     let mut any_list = false;
     for placeholder in template.placeholders() {
-        let value = placeholder
-            .expression
-            .evaluate_with(context.shallow_clone(), &mut vm)
-            .map_err(|e| {
-                let kind = isolate_kind(&e);
-                problem(placeholder, node, kind, format!("failed to evaluate: {e}"))
-            })?;
-        let r = resolve(&value, placeholder, node, context)?;
-        any_list |= matches!(r, Resolved::List(_));
-        resolved.push(r);
+        let value = evaluate(placeholder, context, &mut vm, node)?;
+        let slot = resolve(&value, placeholder, node, context)?;
+        any_list |= matches!(slot, Resolved::List(_));
+        resolved.push(slot);
     }
 
-    let count: usize = resolved
-        .iter()
-        .map(|r| match r {
-            Resolved::Scalar(_) => 1,
-            Resolved::List(v) => v.len(),
-        })
-        .sum();
+    let count: usize = resolved.iter().map(Resolved::width).sum();
     check_param_count(template, count)?;
 
     let sql = if any_list {
-        let widths: Vec<usize> = resolved
-            .iter()
-            .map(|r| match r {
-                Resolved::Scalar(_) => 1,
-                Resolved::List(v) => v.len(),
-            })
-            .collect();
+        let widths: Vec<usize> = resolved.iter().map(Resolved::width).collect();
         Arc::from(template.render(&widths))
     } else {
         template.scalar_sql().clone()
     };
 
     let mut params = Vec::with_capacity(count);
-    for r in resolved {
-        match r {
-            Resolved::Scalar(v) => params.push(v),
-            Resolved::List(v) => params.extend(v),
+    for slot in resolved {
+        match slot {
+            Resolved::Scalar(value) => params.push(value),
+            Resolved::List(values) => params.extend(values),
         }
     }
     Ok(BoundQuery { sql, params })
+}
+
+fn evaluate(
+    placeholder: &Placeholder,
+    context: &Variable,
+    vm: &mut VM,
+    node: NodeLabel<'_>,
+) -> Result<Variable, BindError> {
+    placeholder
+        .expression
+        .evaluate_with(context.shallow_clone(), vm)
+        .map_err(|e| {
+            let kind = isolate_kind(&e);
+            problem(placeholder, node, kind, format!("failed to evaluate: {e}"))
+        })
 }
 
 fn check_param_count(template: &QueryTemplate, count: usize) -> Result<(), BindError> {
@@ -128,8 +149,7 @@ fn check_param_count(template: &QueryTemplate, count: usize) -> Result<(), BindE
 }
 
 /// Templates with `{{#if}}` blocks or LIMIT/OFFSET counts: walks the pieces, keeps the branch
-/// each guard picks, and evaluates only the placeholders of kept branches (a placeholder in a
-/// dropped filter may well be null: that is why the filter was dropped). Values are bound
+/// each guard picks, and evaluates only the placeholders of kept branches. Values are bound
 /// exactly as on the static path; the only text that varies is the template's own SQL and the
 /// digits of a checked count.
 fn bind_dynamic(
@@ -191,41 +211,26 @@ impl Walk<'_, '_> {
         }
     }
 
-    fn evaluate(&mut self, placeholder: &Placeholder) -> Result<Variable, BindError> {
-        placeholder
-            .expression
-            .evaluate_with(self.context.shallow_clone(), &mut self.vm)
-            .map_err(|e| {
-                let kind = isolate_kind(&e);
-                problem(
-                    placeholder,
-                    self.node,
-                    kind,
-                    format!("failed to evaluate: {e}"),
-                )
-            })
-    }
-
     fn slot(&mut self, placeholder: &Placeholder) -> Result<(), BindError> {
-        let value = self.evaluate(placeholder)?;
+        let value = evaluate(placeholder, self.context, &mut self.vm, self.node)?;
         match placeholder.kind {
             SlotKind::Count => {
-                let n = count(&value)
+                let number = count(&value)
                     .map_err(|(kind, why)| problem(placeholder, self.node, kind, why))?;
-                self.sql.push_str(&n.to_string());
+                self.sql.push_str(&number.to_string());
             }
             SlotKind::Value => match resolve(&value, placeholder, self.node, self.context)? {
-                Resolved::Scalar(v) => {
+                Resolved::Scalar(bound) => {
                     self.marker();
-                    self.params.push(v);
+                    self.params.push(bound);
                 }
                 Resolved::List(values) => {
-                    for (i, v) in values.into_iter().enumerate() {
-                        if i > 0 {
+                    for (index, bound) in values.into_iter().enumerate() {
+                        if index > 0 {
                             self.sql.push_str(", ");
                         }
                         self.marker();
-                        self.params.push(v);
+                        self.params.push(bound);
                     }
                 }
             },
@@ -235,34 +240,35 @@ impl Walk<'_, '_> {
 
     fn guard(&mut self, guard: &Guard) -> Result<bool, BindError> {
         for all_of in &guard.any_of {
-            let mut all = true;
-            for term in all_of {
-                let value = term
-                    .expression
-                    .evaluate_with(self.context.shallow_clone(), &mut self.vm)
-                    .map_err(|e| BindError::Placeholder {
-                        kind: isolate_kind(&e),
-                        expression: format!("#if {}", guard.source),
-                        node_name: self.node.name.to_string(),
-                        node_id: self.node.id.to_string(),
-                        problem: format!("condition failed to evaluate: {e}"),
-                    })?;
-                if truthy(&value) == term.negate {
-                    all = false;
-                    break;
-                }
-            }
-            if all {
+            if self.all_terms_hold(guard, all_of)? {
                 return Ok(true);
             }
         }
         Ok(false)
     }
+
+    fn all_terms_hold(&mut self, guard: &Guard, all_of: &[Term]) -> Result<bool, BindError> {
+        for term in all_of {
+            let value = term
+                .expression
+                .evaluate_with(self.context.shallow_clone(), &mut self.vm)
+                .map_err(|e| BindError::Placeholder {
+                    kind: isolate_kind(&e),
+                    expression: format!("#if {}", guard.source),
+                    node_name: self.node.name.to_string(),
+                    node_id: self.node.id.to_string(),
+                    problem: format!("condition failed to evaluate: {e}"),
+                })?;
+            if truthy(&value) == term.negate {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
 }
 
-/// Guard truthiness, tuned for search requests where "not asked" arrives in many forms: a
-/// missing key, null, false, 0, blank text, an empty list or object are false.
-pub(crate) fn truthy(value: &Variable) -> bool {
+/// Guard truthiness: a missing key, null, false, 0, blank text, an empty list or object are false.
+fn truthy(value: &Variable) -> bool {
     match value {
         Variable::Null => false,
         Variable::Bool(b) => *b,
@@ -274,8 +280,7 @@ pub(crate) fn truthy(value: &Variable) -> bool {
     }
 }
 
-/// The largest LIMIT / OFFSET a placeholder may write (StarRocks and MySQL take 64-bit counts;
-/// anything near this is a bug in the request, not a page size).
+/// The largest LIMIT / OFFSET a placeholder may write.
 pub const MAX_COUNT: u64 = 1_000_000_000;
 
 /// A LIMIT / OFFSET value: a whole number 0..=MAX_COUNT, given as a number or as digits.
@@ -314,26 +319,26 @@ fn problem(
     placeholder: &Placeholder,
     node: NodeLabel<'_>,
     kind: FailureKind,
-    problem: String,
+    description: String,
 ) -> BindError {
     BindError::Placeholder {
         kind,
         expression: placeholder.source.to_string(),
         node_name: node.name.to_string(),
         node_id: node.id.to_string(),
-        problem,
+        problem: description,
     }
 }
 
-fn scalar(value: &Variable) -> Result<BindValue, &'static str> {
+fn scalar(value: &Variable) -> Result<BindValue, NotScalar> {
     match value {
         Variable::Bool(b) => Ok(BindValue::Bool(*b)),
         Variable::Number(n) => Ok(number(*n)),
         Variable::String(s) => Ok(BindValue::Text(s.to_string())),
-        Variable::Null => Err("null"),
-        Variable::Array(_) => Err("array"),
-        Variable::Object(_) => Err("object"),
-        Variable::Dynamic(d) => Err(d.type_name()),
+        Variable::Null => Err(NotScalar::Null),
+        Variable::Array(_) => Err(NotScalar::Array),
+        Variable::Object(_) => Err(NotScalar::Other("object")),
+        Variable::Dynamic(d) => Err(NotScalar::Other(d.type_name())),
     }
 }
 
@@ -374,72 +379,68 @@ fn resolve(
                 missing_key_hint(&placeholder.source, context)
             ),
         )),
-        Variable::Array(items) => {
-            let items = items.borrow();
-            if items.is_empty() {
-                return Err(problem(
-                    placeholder,
-                    node,
-                    FailureKind::Type,
-                    "resolved to an empty array, which has no SQL form — `IN ()` is a syntax error. Guard it upstream, e.g. `{{ len(ids) == 0 ? [-1] : ids }}`".to_string(),
-                ));
-            }
-            let mut out = Vec::with_capacity(items.len());
-            for (index, item) in items.iter().enumerate() {
-                match scalar(item) {
-                    Ok(v) => out.push(v),
-                    Err("null") => {
-                        return Err(problem(
-                            placeholder,
-                            node,
-                            FailureKind::MissingValue,
-                            format!("resolved to an array whose element {index} is null"),
-                        ))
-                    }
-                    Err("array") => return Err(problem(
-                        placeholder,
-                        node,
-                        FailureKind::Type,
-                        format!("resolved to an array whose element {index} is itself an array; nested arrays are not expanded (tuple syntax such as `IN ((1,2),(3,4))` is unsupported)"),
-                    )),
-                    Err(t) => {
-                        return Err(problem(
-                            placeholder,
-                            node,
-                            FailureKind::Type,
-                            format!("resolved to an array whose element {index} is a {t}, which has no bindable SQL form"),
-                        ))
-                    }
-                }
-            }
-            Ok(Resolved::List(out))
-        }
-        other => scalar(other)
-            .map(Resolved::Scalar)
-            .map_err(|t| problem(placeholder, node, FailureKind::Type, unbindable(t))),
+        Variable::Array(items) => resolve_list(&items.borrow(), placeholder, node),
+        other => scalar(other).map(Resolved::Scalar).map_err(|reason| {
+            let type_name = match reason {
+                NotScalar::Null => "null",
+                NotScalar::Array => "array",
+                NotScalar::Other(type_name) => type_name,
+            };
+            problem(placeholder, node, FailureKind::Type, unbindable(type_name))
+        }),
     }
+}
+
+fn resolve_list(
+    items: &[Variable],
+    placeholder: &Placeholder,
+    node: NodeLabel<'_>,
+) -> Result<Resolved, BindError> {
+    if items.is_empty() {
+        return Err(problem(
+            placeholder,
+            node,
+            FailureKind::Type,
+            "resolved to an empty array, which has no SQL form — `IN ()` is a syntax error. Guard it upstream, e.g. `{{ len(ids) == 0 ? [-1] : ids }}`".to_string(),
+        ));
+    }
+    let mut values = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let value = scalar(item).map_err(|reason| {
+            let (kind, description) = match reason {
+                NotScalar::Null => (
+                    FailureKind::MissingValue,
+                    format!("resolved to an array whose element {index} is null"),
+                ),
+                NotScalar::Array => (
+                    FailureKind::Type,
+                    format!("resolved to an array whose element {index} is itself an array; nested arrays are not expanded (tuple syntax such as `IN ((1,2),(3,4))` is unsupported)"),
+                ),
+                NotScalar::Other(type_name) => (
+                    FailureKind::Type,
+                    format!("resolved to an array whose element {index} is a {type_name}, which has no bindable SQL form"),
+                ),
+            };
+            problem(placeholder, node, kind, description)
+        })?;
+        values.push(value);
+    }
+    Ok(Resolved::List(values))
 }
 
 /// For a plain dotted path that resolved to null, say which part exists and what keys it has.
 fn missing_key_hint(source: &str, context: &Variable) -> String {
-    let is_path = !source.is_empty()
-        && source.split('.').all(|part| {
-            let mut chars = part.chars();
-            matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$')
-                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-        });
-    if !is_path {
+    if !is_plain_path(source) {
         return String::new();
     }
-    let parts: Vec<&str> = source.split('.').collect();
     let mut current = context.shallow_clone();
     let mut existing = String::new();
-    for part in &parts {
+    for part in source.split('.') {
         let next = match &current {
             Variable::Object(obj) => obj
                 .borrow()
                 .iter()
-                .find(|(k, _)| k.as_str() == *part)
+                .find(|(k, _)| k.as_str() == part)
                 .map(|(_, v)| v.shallow_clone()),
             _ => None,
         };
@@ -462,28 +463,41 @@ fn missing_key_hint(source: &str, context: &Variable) -> String {
             None => break,
         }
     }
-    let Variable::Object(obj) = &current else {
+    let Variable::Object(object) = &current else {
         return String::new();
     };
-    let obj = obj.borrow();
-    let mut keys: Vec<String> = obj
+    let object = object.borrow();
+    existing_keys_hint(&existing, &object)
+}
+
+fn is_plain_path(source: &str) -> bool {
+    !source.is_empty()
+        && source.split('.').all(|part| {
+            let mut chars = part.chars();
+            matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+        })
+}
+
+/// Says which keys the deepest existing object of a path has (sorted, at most [`HINT_KEYS`]).
+fn existing_keys_hint(existing: &str, object: &VariableMap) -> String {
+    let mut keys: Vec<String> = object
         .iter()
         .map(|(k, _)| k.to_string())
         .filter(|k| k != "$nodes")
         .collect();
     keys.sort();
-    const SHOWN: usize = 10;
-    let more = keys.len().saturating_sub(SHOWN);
-    keys.truncate(SHOWN);
+    let more = keys.len().saturating_sub(HINT_KEYS);
+    keys.truncate(HINT_KEYS);
     let subject = if existing.is_empty() {
         "the node input".to_string()
     } else {
         format!("\"{existing}\"")
     };
-    let mut hint = format!(" ({subject} exists and has keys: {}", keys.join(", "));
+    let keys = keys.join(", ");
     if more > 0 {
-        hint.push_str(&format!(" (+{more} more)"));
+        format!(" ({subject} exists and has keys: {keys} (+{more} more))")
+    } else {
+        format!(" ({subject} exists and has keys: {keys})")
     }
-    hint.push(')');
-    hint
 }

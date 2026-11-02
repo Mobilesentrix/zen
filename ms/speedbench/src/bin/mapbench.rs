@@ -1,6 +1,6 @@
-//! Cost of the large (> 32 entry) object representation: upstream's ahash HashMap vs
-//! this fork's IndexMap (insertion order), on what an evaluation does with a wide context:
-//! clone it, insert a few outputs, read some keys, iterate it (serialize/merge), drop it.
+//! Cost of the large (> 32 entry) object representation: ahash HashMap vs IndexMap (insertion
+//! order), on what an evaluation does with a wide context: clone it, insert a few outputs, read
+//! some keys, iterate it (serialize/merge), drop it.
 use ahash::RandomState;
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -9,78 +9,82 @@ use std::time::Instant;
 use zen_types::symbol::Symbol;
 use zen_types::variable::Variable;
 
-fn keys(n: usize) -> Vec<Symbol> {
-    (0..n)
+const ITERATIONS: i32 = 200_000;
+const OUTPUT_KEYS: usize = 4;
+/// Every how many fields a key is read.
+const READ_EVERY: usize = 3;
+
+fn field_keys(count: usize) -> Vec<Symbol> {
+    (0..count)
         .map(|i| Symbol::from(format!("field_name_{i}").as_str()))
         .collect()
 }
 
 fn run<M: Clone>(
     name: &str,
-    n: usize,
+    entries: usize,
     build: impl Fn(&[Symbol]) -> M,
     insert: impl Fn(&mut M, Symbol, Variable),
-    get: impl Fn(&M, &str) -> bool,
-    iter_len: impl Fn(&M) -> usize,
+    contains: impl Fn(&M, &str) -> bool,
+    iterated_length: impl Fn(&M) -> usize,
 ) -> f64 {
-    let ks = keys(n);
-    let base = build(&ks);
-    let outs = keys(4)
+    let keys = field_keys(entries);
+    let base = build(&keys);
+    let outputs = field_keys(OUTPUT_KEYS)
         .into_iter()
-        .map(|k| Symbol::from(format!("out_{}", k.as_str()).as_str()))
+        .map(|key| Symbol::from(format!("out_{}", key.as_str()).as_str()))
         .collect::<Vec<_>>();
-    let iters = 200_000;
-    let t = Instant::now();
-    for i in 0..iters {
-        let mut m = base.clone();
-        for k in &outs {
-            insert(&mut m, k.clone(), Variable::Number((i as i64).into()));
+    let start = Instant::now();
+    for i in 0..ITERATIONS {
+        let mut map = base.clone();
+        for key in &outputs {
+            insert(&mut map, key.clone(), Variable::Number(i64::from(i).into()));
         }
         let mut hits = 0;
-        for k in ks.iter().step_by(3) {
-            hits += get(&m, k.as_str()) as usize;
+        for key in keys.iter().step_by(READ_EVERY) {
+            hits += usize::from(contains(&map, key.as_str()));
         }
-        black_box(hits + iter_len(&m));
-        drop(black_box(m));
+        black_box(hits + iterated_length(&map));
+        drop(black_box(map));
     }
-    let ns = t.elapsed().as_nanos() as f64 / iters as f64;
+    let nanos_per_iteration = start.elapsed().as_nanos() as f64 / f64::from(ITERATIONS);
     println!(
-        "{name:<10} n={n:<4} {ns:8.1} ns per clone+4 inserts+{} gets+iterate+drop",
-        n.div_ceil(3)
+        "{name:<10} n={entries:<4} {nanos_per_iteration:8.1} ns per clone+4 inserts+{} gets+iterate+drop",
+        entries.div_ceil(READ_EVERY)
     );
-    ns
+    nanos_per_iteration
 }
 
 fn main() {
-    for n in [34, 58, 120] {
-        let h = run(
+    for entries in [34, 58, 120] {
+        let hash_map = run(
             "HashMap",
-            n,
-            |ks| {
-                ks.iter()
-                    .map(|k| (k.clone(), Variable::Bool(true)))
+            entries,
+            |keys| {
+                keys.iter()
+                    .map(|key| (key.clone(), Variable::Bool(true)))
                     .collect::<HashMap<_, _, RandomState>>()
             },
-            |m, k, v| {
-                m.insert(k, v);
+            |map, key, value| {
+                map.insert(key, value);
             },
-            |m, k| m.contains_key(k),
-            |m| m.iter().count(),
+            |map, key| map.contains_key(key),
+            |map| map.iter().count(),
         );
-        let x = run(
+        let index_map = run(
             "IndexMap",
-            n,
-            |ks| {
-                ks.iter()
-                    .map(|k| (k.clone(), Variable::Bool(true)))
+            entries,
+            |keys| {
+                keys.iter()
+                    .map(|key| (key.clone(), Variable::Bool(true)))
                     .collect::<IndexMap<_, _, RandomState>>()
             },
-            |m, k, v| {
-                m.insert(k, v);
+            |map, key, value| {
+                map.insert(key, value);
             },
-            |m, k| m.contains_key(k),
-            |m| m.iter().count(),
+            |map, key| map.contains_key(key),
+            |map| map.iter().count(),
         );
-        println!("IndexMap / HashMap = {:.2}", x / h);
+        println!("IndexMap / HashMap = {:.2}", index_map / hash_map);
     }
 }

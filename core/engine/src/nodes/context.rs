@@ -28,13 +28,13 @@ where
 {
     pub id: Arc<str>,
     pub name: Arc<str>,
-    /// MobileSentrix: the node's content behind an `Rc`: a context is cloned for every item of a
+    /// The node's content behind an `Rc`: a context is cloned for every item of a
     /// loop-mode node, and an owned content would clone its shared `Arc`s each time.
     pub node: Rc<NodeData>,
     pub input: Variable,
     pub nodes: Option<Variable>,
     pub trace: Option<RefCell<TraceData>>,
-    /// MobileSentrix: shared per evaluation (`Rc`), so a node context clones one counter that
+    /// Shared per evaluation (`Rc`), so a node context clones one counter that
     /// only this thread touches instead of every extension's `Arc`.
     pub extensions: Rc<NodeHandlerExtensions>,
     pub iteration: u8,
@@ -129,7 +129,7 @@ where
         let mut removed: HashSet<String> = HashSet::default();
         let mut first = true;
         loop {
-            // MobileSentrix: after a round of removals, "no errors left" is checked with
+            // After a round of removals, "no errors left" is checked with
             // is_valid instead of collecting every error of the (usually now valid) value.
             if !first && validator.is_valid(VariableNode::new(&current, &Guards::default())) {
                 return Ok(());
@@ -338,7 +338,7 @@ pub struct NodeContextBase {
 }
 
 thread_local! {
-    /// MobileSentrix: isolates kept for reuse on this thread. A node (and, in loop mode, every
+    /// Isolates kept for reuse on this thread. A node (and, in loop mode, every
     /// item of it) would otherwise build a fresh isolate with fresh lexer/compiler/VM/arena buffers.
     static ISOLATES: RefCell<Vec<Isolate>> = const { RefCell::new(Vec::new()) };
 }

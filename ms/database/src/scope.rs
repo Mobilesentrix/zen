@@ -1,10 +1,9 @@
 //! Per-evaluation de-duplication of identical queries.
 //!
-//! No row data is ever cached across requests. Inside ONE evaluate
-//! call, however, two identical lookups (same connection, same SQL, same bound values) share one
-//! round trip. The embedder opens the scope around the call with [`with_evaluation_scope`];
-//! the table lives in a tokio task-local, so it is exact even when several evaluations
-//! interleave on one thread (the FFI's batch path), and it is dropped when the call returns.
+//! No row data is ever cached across requests. Inside one evaluate call, two identical lookups
+//! (same connection, same SQL, same bound values) share one round trip. The embedder opens the
+//! scope around the call with [`with_evaluation_scope`]; the table is a tokio task-local, exact
+//! even when several evaluations interleave on one thread, and dropped when the call returns.
 //! Outside a scope every query goes to the database.
 
 use crate::bind::{BindValue, BoundQuery};
@@ -32,7 +31,10 @@ impl DedupKey {
     }
 }
 
-type Table = Rc<RefCell<HashMap<DedupKey, Rc<Vec<Value>>>>>;
+/// Rows of one query, shared between everything that query answers.
+pub(crate) type SharedRows = Rc<Vec<Value>>;
+
+type Table = Rc<RefCell<HashMap<DedupKey, SharedRows>>>;
 
 tokio::task_local! {
     static EVALUATION: Table;
@@ -51,7 +53,7 @@ pub fn in_evaluation_scope() -> bool {
 }
 
 /// Rows already fetched for `key` in this evaluation, if any (shared, not copied).
-pub(crate) fn lookup(key: &DedupKey) -> Option<Rc<Vec<Value>>> {
+pub(crate) fn lookup(key: &DedupKey) -> Option<SharedRows> {
     EVALUATION
         .try_with(|table| table.borrow().get(key).cloned())
         .ok()
@@ -59,7 +61,7 @@ pub(crate) fn lookup(key: &DedupKey) -> Option<Rc<Vec<Value>>> {
 }
 
 /// Remembers `rows` for `key` until the evaluation returns (no-op outside a scope).
-pub(crate) fn store(key: DedupKey, rows: Rc<Vec<Value>>) {
+pub(crate) fn store(key: DedupKey, rows: SharedRows) {
     let _ = EVALUATION.try_with(|table| {
         table.borrow_mut().insert(key, rows);
     });

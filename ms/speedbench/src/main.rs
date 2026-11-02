@@ -13,6 +13,19 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+/// Evaluations of every rule before measuring starts.
+const WARM_UP_CALLS: usize = 200;
+/// How long `bench` drives each rule from many threads.
+const PARALLEL_SECONDS: f64 = 1.0;
+/// Calls between two looks at the clock in `bench`.
+const DEADLINE_CHECK_EVERY: usize = 64;
+/// Frames above a `--callers` target that make up a call chain.
+const CALLER_CHAIN_FRAMES: usize = 4;
+/// Call chains printed per `--callers` target.
+const CALLER_CHAINS_SHOWN: usize = 12;
+const SYMBOL_HASH_SUFFIX_LENGTH: usize = 19;
+const SYMBOL_NAME_MAX_CHARS: usize = 160;
+
 #[repr(C)]
 struct ZenResult {
     result: *mut c_char,
@@ -59,16 +72,16 @@ static RULES: OnceLock<HashMap<String, Vec<u8>>> = OnceLock::new();
 
 fn c_malloc_copy(bytes: &[u8]) -> *mut c_char {
     unsafe {
-        let p = libc::malloc(bytes.len() + 1) as *mut u8;
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
-        *p.add(bytes.len()) = 0;
-        p as *mut c_char
+        let copy = libc::malloc(bytes.len() + 1).cast::<u8>();
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), copy, bytes.len());
+        *copy.add(bytes.len()) = 0;
+        copy.cast::<c_char>()
     }
 }
 
 extern "C" fn loader(key: *const c_char) -> LoaderResult {
     let key = unsafe { CStr::from_ptr(key) }.to_string_lossy();
-    match RULES.get().and_then(|r| r.get(key.as_ref())) {
+    match RULES.get().and_then(|rules| rules.get(key.as_ref())) {
         Some(content) => LoaderResult {
             content: c_malloc_copy(content),
             error: std::ptr::null_mut(),
@@ -92,145 +105,151 @@ unsafe impl Send for Engine {}
 unsafe impl Sync for Engine {}
 
 impl Engine {
-    fn eval(&self, key: &CStr, ctx: &CStr, opts: Options) -> bool {
-        let r = unsafe { zen_engine_evaluate(self.0, key.as_ptr(), ctx.as_ptr(), opts) };
+    fn eval(&self, key: &CStr, context: &CStr, options: Options) -> bool {
+        let result =
+            unsafe { zen_engine_evaluate(self.0, key.as_ptr(), context.as_ptr(), options) };
         unsafe {
-            if !r.result.is_null() {
-                libc::free(r.result as *mut libc::c_void);
+            if !result.result.is_null() {
+                libc::free(result.result.cast::<libc::c_void>());
             }
-            if !r.details.is_null() {
-                libc::free(r.details as *mut libc::c_void);
+            if !result.details.is_null() {
+                libc::free(result.details.cast::<libc::c_void>());
             }
         }
-        r.error == 0
+        result.error == 0
     }
 }
 
 struct Args {
-    cmd: String,
+    command: String,
     export: String,
     only: Vec<String>,
-    iters: usize,
+    iterations: usize,
     threads: usize,
-    secs: f64,
+    seconds: f64,
     svg: Option<String>,
     top: usize,
     trace: bool,
     callers: Vec<String>,
 }
 
+fn comma_list(value: &str) -> Vec<String> {
+    value.split(',').map(String::from).collect()
+}
+
 fn parse_args() -> Args {
-    let mut it = std::env::args().skip(1);
-    let cmd = it.next().expect("command");
-    let export = it.next().expect("export file");
-    let mut a = Args {
-        cmd,
+    let mut arguments = std::env::args().skip(1);
+    let command = arguments.next().expect("command");
+    let export = arguments.next().expect("export file");
+    let mut args = Args {
+        command,
         export,
         only: vec![],
-        iters: 3000,
+        iterations: 3000,
         threads: 1,
-        secs: 3.0,
+        seconds: 3.0,
         svg: None,
         top: 40,
         trace: false,
         callers: vec![],
     };
-    while let Some(f) = it.next() {
-        match f.as_str() {
-            "--only" => a.only = it.next().unwrap().split(',').map(String::from).collect(),
-            "--iters" => a.iters = it.next().unwrap().parse().unwrap(),
-            "--threads" => a.threads = it.next().unwrap().parse().unwrap(),
-            "--secs" => a.secs = it.next().unwrap().parse().unwrap(),
-            "--svg" => a.svg = it.next(),
-            "--top" => a.top = it.next().unwrap().parse().unwrap(),
-            "--trace" => a.trace = true,
-            "--callers" => a.callers = it.next().unwrap().split(',').map(String::from).collect(),
+    while let Some(flag) = arguments.next() {
+        match flag.as_str() {
+            "--only" => args.only = comma_list(&arguments.next().unwrap()),
+            "--iters" => args.iterations = arguments.next().unwrap().parse().unwrap(),
+            "--threads" => args.threads = arguments.next().unwrap().parse().unwrap(),
+            "--secs" => args.seconds = arguments.next().unwrap().parse().unwrap(),
+            "--svg" => args.svg = arguments.next(),
+            "--top" => args.top = arguments.next().unwrap().parse().unwrap(),
+            "--trace" => args.trace = true,
+            "--callers" => args.callers = comma_list(&arguments.next().unwrap()),
             other => panic!("unknown flag {other}"),
         }
     }
-    a
+    args
 }
 
-fn main() {
-    let a = parse_args();
-    let raw = std::fs::read(&a.export).expect("read export");
-    let v: serde_json::Value = serde_json::from_slice(&raw).expect("export json");
+/// One rule key and the contexts it is evaluated with.
+type RuleCases = (CString, Vec<CString>);
+
+/// Publishes the export's rules to the loader callback and returns the selected cases.
+fn load_export(args: &Args) -> Vec<RuleCases> {
+    let raw = std::fs::read(&args.export).expect("read export");
+    let export: serde_json::Value = serde_json::from_slice(&raw).expect("export json");
     let mut rules = HashMap::new();
-    for (k, c) in v["rules"].as_object().unwrap() {
-        rules.insert(k.clone(), serde_json::to_vec(c).unwrap());
+    for (key, content) in export["rules"].as_object().unwrap() {
+        rules.insert(key.clone(), serde_json::to_vec(content).unwrap());
     }
     RULES.set(rules).unwrap();
-    let mut work: Vec<(CString, Vec<CString>)> = vec![];
-    let mut keys: Vec<&String> = v["cases"].as_object().unwrap().keys().collect();
+    let mut keys: Vec<&String> = export["cases"].as_object().unwrap().keys().collect();
     keys.sort();
-    for k in keys {
-        if !a.only.is_empty() && !a.only.iter().any(|o| o == k) {
+    let mut work = vec![];
+    for key in keys {
+        if !args.only.is_empty() && !args.only.iter().any(|only| only == key) {
             continue;
         }
-        let inputs = v["cases"][k]
+        let inputs = export["cases"][key]
             .as_array()
             .unwrap()
             .iter()
-            .map(|i| CString::new(serde_json::to_vec(i).unwrap()).unwrap())
+            .map(|input| CString::new(serde_json::to_vec(input).unwrap()).unwrap())
             .collect();
-        work.push((CString::new(k.as_str()).unwrap(), inputs));
+        work.push((CString::new(key.as_str()).unwrap(), inputs));
     }
+    work
+}
+
+fn main() {
+    let args = parse_args();
+    let work = load_export(&args);
     let engine = Arc::new(Engine(unsafe { zen_engine_new_native(loader, custom) }));
-    let opts = Options {
-        trace: a.trace,
+    let options = Options {
+        trace: args.trace,
         max_depth: 100,
     };
-    for (k, inputs) in &work {
-        for i in 0..200 {
-            engine.eval(k, &inputs[i % inputs.len()], opts);
+    for (key, inputs) in &work {
+        for i in 0..WARM_UP_CALLS {
+            engine.eval(key, &inputs[i % inputs.len()], options);
         }
     }
-    match a.cmd.as_str() {
-        "bench" => bench(&engine, &work, &a, opts),
-        "profile" => profile(&engine, &work, &a, opts),
-        c => panic!("unknown command {c}"),
+    match args.command.as_str() {
+        "bench" => bench(&engine, &work, &args, options),
+        "profile" => profile(&engine, &work, &args, options),
+        other => panic!("unknown command {other}"),
     }
 }
 
-fn bench(engine: &Arc<Engine>, work: &[(CString, Vec<CString>)], a: &Args, opts: Options) {
+fn bench(engine: &Arc<Engine>, work: &[RuleCases], args: &Args, options: Options) {
     println!(
         "{:<56} {:>9} {:>9} {:>9} {:>11}",
         "rule", "p50 us", "p99 us", "mean us", "par ops/s"
     );
     let mut pooled = vec![];
-    for (k, inputs) in work {
-        let mut s = Vec::with_capacity(a.iters);
-        let mut ok = 0;
-        let deadline = Instant::now() + Duration::from_secs_f64(a.secs);
-        for i in 0..a.iters {
-            let t = Instant::now();
-            if engine.eval(k, &inputs[i % inputs.len()], opts) {
-                ok += 1;
-            }
-            s.push(t.elapsed().as_nanos() as f64 / 1000.0);
-            if i % 64 == 63 && Instant::now() > deadline {
-                break;
-            }
-        }
-        pooled.extend_from_slice(&s);
-        let mean = s.iter().sum::<f64>() / s.len() as f64;
-        s.sort_by(|x, y| x.partial_cmp(y).unwrap());
-        let par = if a.threads > 1 {
-            parallel(engine, k, inputs, a.threads, 1.0, opts)
+    for (key, inputs) in work {
+        let (mut latencies, succeeded) = measure_rule(engine, key, inputs, args, options);
+        pooled.extend_from_slice(&latencies);
+        let mean = latencies.iter().sum::<f64>() / latencies.len() as f64;
+        latencies.sort_by(f64::total_cmp);
+        let operations_per_second = if args.threads > 1 {
+            parallel(engine, key, inputs, args.threads, PARALLEL_SECONDS, options)
         } else {
             0.0
         };
         println!(
             "{:<56} {:>9.1} {:>9.1} {:>9.1} {:>11.0} {}",
-            k.to_string_lossy(),
-            s[s.len() / 2],
-            s[s.len() * 99 / 100],
+            key.to_string_lossy(),
+            latencies[latencies.len() / 2],
+            latencies[latencies.len() * 99 / 100],
             mean,
-            par,
-            if ok == s.len() { "" } else { "(errors)" }
+            operations_per_second,
+            if succeeded == latencies.len() {
+                ""
+            } else {
+                "(errors)"
+            }
         );
     }
-    pooled.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    pooled.sort_by(f64::total_cmp);
     println!(
         "pooled p50 {:.1} us over {} calls",
         pooled[pooled.len() / 2],
@@ -238,106 +257,155 @@ fn bench(engine: &Arc<Engine>, work: &[(CString, Vec<CString>)], a: &Args, opts:
     );
 }
 
-fn parallel(
-    engine: &Arc<Engine>,
-    k: &CString,
+/// Sequential latencies of one rule in microseconds, and how many calls succeeded.
+fn measure_rule(
+    engine: &Engine,
+    key: &CStr,
     inputs: &[CString],
-    threads: usize,
-    secs: f64,
-    opts: Options,
-) -> f64 {
-    let stop = Arc::new(AtomicBool::new(false));
-    let ops = Arc::new(AtomicU64::new(0));
-    let start = Instant::now();
-    std::thread::scope(|sc| {
-        for t in 0..threads {
-            let (stop, ops, engine) = (stop.clone(), ops.clone(), engine.clone());
-            sc.spawn(move || {
-                let mut i = t;
-                let mut n = 0;
-                while !stop.load(Ordering::Relaxed) {
-                    engine.eval(k, &inputs[i % inputs.len()], opts);
-                    i += 1;
-                    n += 1;
-                }
-                ops.fetch_add(n, Ordering::Relaxed);
-            });
+    args: &Args,
+    options: Options,
+) -> (Vec<f64>, usize) {
+    let mut latencies = Vec::with_capacity(args.iterations);
+    let mut succeeded = 0;
+    let deadline = Instant::now() + Duration::from_secs_f64(args.seconds);
+    for i in 0..args.iterations {
+        let call_start = Instant::now();
+        if engine.eval(key, &inputs[i % inputs.len()], options) {
+            succeeded += 1;
         }
-        std::thread::sleep(Duration::from_secs_f64(secs));
-        stop.store(true, Ordering::Relaxed);
-    });
-    ops.load(Ordering::Relaxed) as f64 / start.elapsed().as_secs_f64()
+        latencies.push(call_start.elapsed().as_nanos() as f64 / 1000.0);
+        if i % DEADLINE_CHECK_EVERY == DEADLINE_CHECK_EVERY - 1 && Instant::now() > deadline {
+            break;
+        }
+    }
+    (latencies, succeeded)
 }
 
-fn profile(engine: &Arc<Engine>, work: &[(CString, Vec<CString>)], a: &Args, opts: Options) {
+fn parallel(
+    engine: &Arc<Engine>,
+    key: &CStr,
+    inputs: &[CString],
+    threads: usize,
+    seconds: f64,
+    options: Options,
+) -> f64 {
+    let stop = Arc::new(AtomicBool::new(false));
+    let operations = Arc::new(AtomicU64::new(0));
+    let start = Instant::now();
+    std::thread::scope(|scope| {
+        for thread_index in 0..threads {
+            let (stop, operations, engine) = (stop.clone(), operations.clone(), engine.clone());
+            scope.spawn(move || {
+                let mut input_index = thread_index;
+                let mut completed = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    engine.eval(key, &inputs[input_index % inputs.len()], options);
+                    input_index += 1;
+                    completed += 1;
+                }
+                operations.fetch_add(completed, Ordering::Relaxed);
+            });
+        }
+        std::thread::sleep(Duration::from_secs_f64(seconds));
+        stop.store(true, Ordering::Relaxed);
+    });
+    operations.load(Ordering::Relaxed) as f64 / start.elapsed().as_secs_f64()
+}
+
+fn profile(engine: &Arc<Engine>, work: &[RuleCases], args: &Args, options: Options) {
     let guard = pprof::ProfilerGuardBuilder::default()
         .frequency(4999)
         .build()
         .unwrap();
-    let per = Duration::from_secs_f64(a.secs / work.len() as f64);
-    for (k, inputs) in work {
-        let end = Instant::now() + per;
+    let per_rule = Duration::from_secs_f64(args.seconds / work.len() as f64);
+    for (key, inputs) in work {
+        let end = Instant::now() + per_rule;
         let mut i = 0;
         while Instant::now() < end {
-            engine.eval(k, &inputs[i % inputs.len()], opts);
+            engine.eval(key, &inputs[i % inputs.len()], options);
             i += 1;
         }
     }
     let report = guard.report().build().unwrap();
-    if let Some(svg) = &a.svg {
-        let f = std::fs::File::create(svg).unwrap();
-        report.flamegraph(f).unwrap();
+    if let Some(svg) = &args.svg {
+        let file = std::fs::File::create(svg).unwrap();
+        report.flamegraph(file).unwrap();
     }
-    let mut selfc: HashMap<String, isize> = HashMap::new();
-    let mut incl: HashMap<String, isize> = HashMap::new();
-    let mut total = 0isize;
-    let mut callers: HashMap<String, HashMap<String, isize>> = HashMap::new();
-    for (frames, count) in &report.data {
-        total += count;
-        let names: Vec<String> = frames
-            .frames
-            .iter()
-            .flat_map(|f| f.iter().map(|s| short(&s.name())))
-            .collect();
-        for target in &a.callers {
-            // the chain of the 4 frames above the first frame named `target`
-            if let Some(i) = names.iter().position(|n| n == target) {
-                let chain = names[i + 1..]
+    SampleCounts::from_report(&report, &args.callers).print(args.top);
+}
+
+/// Profile samples aggregated by symbol.
+#[derive(Default)]
+struct SampleCounts {
+    total: isize,
+    self_samples: HashMap<String, isize>,
+    inclusive_samples: HashMap<String, isize>,
+    /// By `--callers` target: samples per call chain above it.
+    callers: HashMap<String, HashMap<String, isize>>,
+}
+
+impl SampleCounts {
+    fn from_report(report: &pprof::Report, caller_targets: &[String]) -> Self {
+        let mut counts = Self::default();
+        for (frames, count) in &report.data {
+            counts.total += count;
+            let names: Vec<String> = frames
+                .frames
+                .iter()
+                .flat_map(|frame| frame.iter().map(|symbol| short(&symbol.name())))
+                .collect();
+            counts.add_caller_chains(&names, caller_targets, *count);
+            if let Some(leaf) = names.first() {
+                *counts.self_samples.entry(leaf.clone()).or_default() += count;
+            }
+            let unique: HashSet<&String> = names.iter().collect();
+            for name in unique {
+                *counts.inclusive_samples.entry(name.clone()).or_default() += count;
+            }
+        }
+        counts
+    }
+
+    /// Records the frames above the first frame named after each target.
+    fn add_caller_chains(&mut self, names: &[String], targets: &[String], count: isize) {
+        for target in targets {
+            if let Some(position) = names.iter().position(|name| name == target) {
+                let chain = names[position + 1..]
                     .iter()
-                    .take(4)
+                    .take(CALLER_CHAIN_FRAMES)
                     .cloned()
                     .collect::<Vec<_>>()
                     .join(" < ");
-                *callers
+                *self
+                    .callers
                     .entry(target.clone())
                     .or_default()
                     .entry(chain)
                     .or_default() += count;
             }
         }
-        if let Some(leaf) = names.first() {
-            *selfc.entry(leaf.clone()).or_default() += count;
+    }
+
+    fn print(&self, top: usize) {
+        for (target, chains) in &self.callers {
+            println!("== CALLERS of {target}");
+            print_top(chains, CALLER_CHAINS_SHOWN, self.total);
         }
-        let uniq: HashSet<&String> = names.iter().collect();
-        for n in uniq {
-            *incl.entry(n.clone()).or_default() += count;
+        for (title, samples) in [
+            ("SELF", &self.self_samples),
+            ("INCLUSIVE", &self.inclusive_samples),
+        ] {
+            println!("== {title} (samples {})", self.total);
+            print_top(samples, top, self.total);
         }
     }
-    for (target, chains) in &callers {
-        let mut v: Vec<_> = chains.iter().collect();
-        v.sort_by(|x, y| y.1.cmp(x.1));
-        println!("== CALLERS of {target}");
-        for (chain, c) in v.into_iter().take(12) {
-            println!("{:6.2}%  {}", *c as f64 * 100.0 / total as f64, chain);
-        }
-    }
-    for (title, map) in [("SELF", &selfc), ("INCLUSIVE", &incl)] {
-        let mut v: Vec<_> = map.iter().collect();
-        v.sort_by(|x, y| y.1.cmp(x.1));
-        println!("== {title} (samples {total})");
-        for (n, c) in v.into_iter().take(a.top) {
-            println!("{:6.2}%  {}", *c as f64 * 100.0 / total as f64, n);
-        }
+}
+
+fn print_top(samples: &HashMap<String, isize>, limit: usize, total: isize) {
+    let mut sorted: Vec<_> = samples.iter().collect();
+    sorted.sort_by(|left, right| right.1.cmp(left.1));
+    for (name, count) in sorted.into_iter().take(limit) {
+        println!("{:6.2}%  {}", *count as f64 * 100.0 / total as f64, name);
     }
 }
 
@@ -354,8 +422,8 @@ fn short(name: &str) -> String {
         }
     }
     let out = match out.rfind("::h") {
-        Some(i) if out.len() - i == 19 => out[..i].to_string(),
+        Some(i) if out.len() - i == SYMBOL_HASH_SUFFIX_LENGTH => out[..i].to_string(),
         _ => out,
     };
-    out.chars().take(160).collect()
+    out.chars().take(SYMBOL_NAME_MAX_CHARS).collect()
 }

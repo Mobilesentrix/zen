@@ -72,7 +72,7 @@ pub extern "C" fn zen_decision_evaluate(
             return ZenResult::error(ZenError::InvalidArgument);
         };
 
-        // MobileSentrix: one pass into a Variable (same tree as Value + Variable::from).
+        // One pass into a Variable (same tree as Value + Variable::from).
         let Ok(context) = parse_context(str_context.as_bytes(), OutOfRange::Null) else {
             return ZenResult::error(ZenError::JsonDeserializationFailed);
         };
@@ -87,7 +87,7 @@ pub extern "C" fn zen_decision_evaluate(
             Err(e) => return ZenResult::from_evaluation_error(&e, traced),
         };
 
-        // MobileSentrix: written straight into malloc memory (ms_alloc::malloc_json).
+        // Written straight into malloc memory (ms_alloc::malloc_json).
         match crate::ms_alloc::malloc_json(&result) {
             Ok(p) => ZenResult::ok(p),
             Err(_) => ZenResult::error(ZenError::JsonSerializationFailed),

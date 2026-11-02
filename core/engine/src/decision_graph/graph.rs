@@ -36,13 +36,13 @@ use zen_types::decision::{DecisionNode, InputNodeContent, OutputNodeContent};
 
 #[derive(Debug)]
 pub struct DecisionGraph {
-    // MobileSentrix: a compiled decision builds its graph once (GraphContent::compile); an
+    // A compiled decision builds its graph once (GraphContent::compile); an
     // evaluation works on a view of it that records what switch nodes remove.
     initial_graph: Arc<StableDiDecisionGraph>,
     graph: GraphView,
     config: DecisionGraphConfig,
     parent_nodes: Option<Variable>,
-    /// MobileSentrix: `config.extensions` shared by this evaluation's node contexts.
+    /// `config.extensions` shared by this evaluation's node contexts.
     extensions: Rc<NodeHandlerExtensions>,
 }
 
@@ -107,7 +107,7 @@ impl DecisionGraph {
     }
 
     pub fn validate(&self) -> Result<(), DecisionGraphValidationError> {
-        // MobileSentrix: the untouched prepared graph was validated when it was compiled.
+        // The untouched prepared graph was validated when it was compiled.
         if !self.graph.is_pristine() {
             return Self::validate_graph(&self.graph.materialize());
         }
@@ -318,7 +318,7 @@ impl DecisionGraph {
         walker.set_nodes_readers(self.config.content.nodes_readers.clone());
         walker.set_compiled_cache(self.extensions.compiled_cache.clone());
         let mut tracer = NodeTracer::new(self.config.trace);
-        // MobileSentrix: database steps start as soon as their inputs are known (see
+        // Database steps start as soon as their inputs are known (see
         // `decision_graph::early`); the walk below still takes every node in its own order. A
         // graph whose compiled plan has nothing to start early has no state here.
         let mut early = EarlySteps::new(self.config.content.prepared_graph.as_ref());

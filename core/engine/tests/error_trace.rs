@@ -1,4 +1,4 @@
-//! MobileSentrix: a traced evaluation error carries, on the failing node's trace entry, what
+//! A traced evaluation error carries, on the failing node's trace entry, what
 //! failed (`error`: kind, message, part, expression, key, missing, nodeId). Successful entries and
 //! untraced errors keep upstream's shape (MS-FFI.md "Error trace").
 

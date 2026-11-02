@@ -110,7 +110,7 @@ impl NodeHandler for DecisionNodeHandler {
                 {
                     ctx.trace(|t| *t = trace.to_variable());
                     if ctx.config.trace {
-                        // MobileSentrix: the failing step inside the sub-decision, on this node.
+                        // The failing step inside the sub-decision, on this node.
                         let failure = failure::sub_decision(node_id, source.as_ref());
                         return ctx.error(FailedNode::new(failure, err.to_string()));
                     }

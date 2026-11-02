@@ -1,7 +1,6 @@
 use crate::nodes::failure::{self, NodeFailure};
 use crate::nodes::NodeResult;
-/// MobileSentrix: traces keep execution order (upstream uses per-instance-seeded hash maps,
-/// so a trace serialises its nodes in a different order on every run).
+/// Traces keep execution order.
 pub type TraceMap<K, V> = indexmap::IndexMap<K, V, ahash::RandomState>;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -95,13 +94,12 @@ pub struct DecisionGraphTrace {
     pub trace_data: Option<Variable>,
     #[serde(default)]
     pub order: u32,
-    /// MobileSentrix: on the node that failed only, what failed and why (absent otherwise).
+    /// On the node that failed only, what failed and why (absent otherwise).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<NodeFailure>,
 }
 
-/// Written out (not derived) so a node without `error` keeps upstream's shape exactly; the derive
-/// would add `"error": null` to every entry of an error trace and of a sub-decision trace.
+/// Written out (not derived): a node without `error` has no `error` key.
 impl ToVariable for DecisionGraphTrace {
     fn to_variable(&self) -> Variable {
         let mut map = VariableMap::with_capacity(8);

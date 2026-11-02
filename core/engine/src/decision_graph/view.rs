@@ -1,4 +1,4 @@
-//! MobileSentrix: one evaluation's view of a decision's graph.
+//! One evaluation's view of a decision's graph.
 //!
 //! Every evaluation shares the decision's prepared graph and records the edges that switch nodes
 //! remove (the branches not taken, and recursively nodes left without edges) in two bitsets.

@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 use crate::loader::{DecisionLoader, DynamicLoader, LoaderResponse};
 use crate::model::DecisionContent;
 
-/// MobileSentrix: decisions a [`CachedLoader`] keeps unless built with
+/// Decisions a [`CachedLoader`] keeps unless built with
 /// [`CachedLoader::with_capacity`]. Past it the least recently used decision is dropped (and
 /// loaded again through the inner loader when it is next evaluated).
 pub const DEFAULT_CACHED_DECISIONS: usize = 4096;
@@ -22,7 +22,7 @@ struct Entry {
 #[derive(Debug)]
 pub struct CachedLoader {
     loader: DynamicLoader,
-    /// MobileSentrix: bounded to `capacity` entries, least recently used evicted first. A hit
+    /// Bounded to `capacity` entries, least recently used evicted first. A hit
     /// only takes the read lock (it bumps the entry's tick); eviction happens on insert.
     cache: RwLock<HashMap<String, Entry>>,
     capacity: usize,
@@ -67,7 +67,7 @@ async fn prepared(loader: &DynamicLoader, content: Arc<DecisionContent>) -> Arc<
 }
 
 impl CachedLoader {
-    /// MobileSentrix: a cache that keeps at most `capacity` decisions (at least one).
+    /// A cache that keeps at most `capacity` decisions (at least one).
     pub fn with_capacity(loader: DynamicLoader, capacity: usize) -> Self {
         Self {
             loader,

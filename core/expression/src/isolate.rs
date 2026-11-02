@@ -60,7 +60,7 @@ impl Isolate {
         self
     }
 
-    /// MobileSentrix: reuses this isolate as if it were
+    /// Reuses this isolate as if it were
     /// `Isolate::with_environment(variable).with_cache(cache.cloned())`: the environment and
     /// locals are replaced and the reference cache emptied (the lexer, compiler, VM and arena
     /// buffers are reset before every run anyway, and keep their capacity). A cache that is the
@@ -161,7 +161,7 @@ impl Isolate {
     }
 
     pub fn run_standard(&mut self, source: &str) -> Result<Variable, IsolateError> {
-        // MobileSentrix: run the cached bytecode in place (disjoint field borrows), so the
+        // Run the cached bytecode in place (disjoint field borrows), so the
         // Arc's shared counter is not updated.
         if let Some(codes) = self.cache.as_ref().and_then(|c| c.standard.get(source)) {
             return Ok(self.vm.run(codes, &self.scope)?);
@@ -190,7 +190,7 @@ impl Isolate {
     pub fn run_unary(&mut self, source: &str) -> Result<bool, IsolateError> {
         if let Some(codes) = self.cache.as_ref().and_then(|c| c.unary.get(source)) {
             let result = self.vm.run(codes, &self.scope)?;
-            return result.as_bool().ok_or_else(|| IsolateError::ValueCastError);
+            return result.as_bool().ok_or(IsolateError::ValueCastError);
         }
 
         self.run_internal(source, ExpressionKind::Unary)?;

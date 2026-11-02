@@ -19,7 +19,7 @@ impl<'js> FromJs<'js> for JsValue {
     }
 }
 
-/// MobileSentrix: the key of every object property, by its QuickJS atom, as the Symbol it
+/// The key of every object property, by its QuickJS atom, as the Symbol it
 /// becomes (`None` for a reserved key, which is skipped). The items of a result share their
 /// keys (every product has the same fields), so each distinct key is converted from JS once
 /// per result instead of once per item.
@@ -38,8 +38,7 @@ fn from_js_with<'js>(
         )),
         Type::BigInt => Variable::Number(Decimal::from(
             v.into_big_int()
-                .map(|b| b.clone().to_i64().ok())
-                .flatten()
+                .and_then(|b| b.clone().to_i64().ok())
                 .or_throw_msg(ctx, "failed to convert to number")?,
         )),
         Type::Float => Variable::Number(
@@ -51,8 +50,7 @@ fn from_js_with<'js>(
         ),
         Type::String => Variable::String(
             v.into_string()
-                .map(|s| s.to_string().ok())
-                .flatten()
+                .and_then(|s| s.to_string().ok())
                 .map(Symbol::from)
                 .or_throw_msg(ctx, "failed to convert to string")?,
         ),

@@ -41,8 +41,6 @@ fn text(s: &str) -> BindValue {
     BindValue::Text(s.to_string())
 }
 
-// ---------- parsing ----------
-
 #[test]
 fn scalar_placeholder_becomes_question_mark() {
     let t = mysql("SELECT * FROM t WHERE id = {{ id }}");
@@ -293,8 +291,6 @@ fn position_counts_characters_not_bytes() {
         "{e}"
     );
 }
-
-// ---------- binding ----------
 
 #[test]
 fn binds_scalars_by_type() {

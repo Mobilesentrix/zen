@@ -1,4 +1,4 @@
-//! MobileSentrix: database steps that are ready together run together. A decision must answer
+//! Database steps that are ready together run together. A decision must answer
 //! exactly as it does when its steps run one by one (result, trace and errors, timings aside),
 //! and the steps' waits must overlap.
 use serde_json::{json, Value};

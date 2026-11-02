@@ -112,7 +112,7 @@ where
     }
 }
 
-/// MobileSentrix: insertion-ordered maps (traces) keep their order in the variable.
+/// Insertion-ordered maps (traces) keep their order in the variable.
 impl<V, S> ToVariable for indexmap::IndexMap<Rc<str>, V, S>
 where
     V: ToVariable,

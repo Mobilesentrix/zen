@@ -227,7 +227,7 @@ pub extern "C" fn zen_engine_evaluate(
         };
 
         let cstr_context = unsafe { CStr::from_ptr(context) };
-        // MobileSentrix: one pass into a Variable (same tree as Value + try_from_value).
+        // One pass into a Variable (same tree as Value + try_from_value).
         let Ok(var_context) = parse_context(cstr_context.to_bytes(), OutOfRange::Error) else {
             return ZenResult::error(ZenError::JsonDeserializationFailed);
         };
@@ -243,7 +243,7 @@ pub extern "C" fn zen_engine_evaluate(
             Err(e) => return ZenResult::from_evaluation_error(&e, traced),
         };
 
-        // MobileSentrix: written straight into malloc memory (ms_alloc::malloc_json).
+        // Written straight into malloc memory (ms_alloc::malloc_json).
         match crate::ms_alloc::malloc_json(&result) {
             Ok(p) => ZenResult::ok(p),
             Err(_) => ZenResult::error(ZenError::JsonSerializationFailed),

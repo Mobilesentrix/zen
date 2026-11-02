@@ -24,7 +24,7 @@ pub struct NodeHandlerExtensions {
     pub(crate) compiled_cache: Option<Arc<OpcodeCache>>,
     pub(crate) stripped_functions: Option<Arc<ahash::HashMap<Arc<str>, Arc<str>>>>,
     pub(crate) dt_indexes: Option<Arc<ahash::HashMap<Arc<str>, TableIndex>>>,
-    /// MobileSentrix: decision-table cells resolved to bytecode, by node id.
+    /// Decision-table cells resolved to bytecode, by node id.
     pub(crate) dt_cells: Option<Arc<ahash::HashMap<Arc<str>, CompiledCells>>>,
 }
 

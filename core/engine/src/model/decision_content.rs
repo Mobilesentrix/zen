@@ -128,21 +128,21 @@ pub struct GraphContent {
     #[serde(skip)]
     pub(crate) dt_indexes: Option<Arc<HashMap<Arc<str>, TableIndex>>>,
 
-    /// MobileSentrix: the node/edge graph and its validation, built once by `compile` instead of
+    /// The node/edge graph and its validation, built once by `compile` instead of
     /// on every evaluation.
-    /// MobileSentrix: decision-table cells resolved to their bytecode in `compiled_cache`.
+    /// Decision-table cells resolved to their bytecode in `compiled_cache`.
     #[serde(skip)]
     pub(crate) dt_cells: Option<Arc<HashMap<Arc<str>, CompiledCells>>>,
 
     #[serde(skip)]
     pub(crate) prepared_graph: Option<Arc<PreparedGraph>>,
 
-    /// MobileSentrix: ids of the nodes that can read `$nodes` (the outputs of the nodes before
+    /// Ids of the nodes that can read `$nodes` (the outputs of the nodes before
     /// them). Only these get the `$nodes` object built; `None` (not compiled) = every node.
     #[serde(skip)]
     pub(crate) nodes_readers: Option<Arc<HashSet<Arc<str>>>>,
 
-    /// MobileSentrix: ids of the nodes that may run at the same time as other ready nodes of
+    /// Ids of the nodes that may run at the same time as other ready nodes of
     /// this set (see [`concurrent_nodes`]). `None` (not compiled) = none.
     #[serde(skip)]
     pub(crate) concurrent_nodes: Option<Arc<HashSet<Arc<str>>>>,
@@ -208,7 +208,7 @@ fn nodes_readers(nodes: &[Arc<DecisionNode>]) -> HashSet<Arc<str>> {
 pub(crate) struct PreparedGraph {
     pub(crate) graph: Result<Arc<StableDiDecisionGraph>, DecisionGraphValidationError>,
     pub(crate) validation: Result<(), DecisionGraphValidationError>,
-    /// MobileSentrix: what may start before the walk reaches it (`None` = nothing), decided
+    /// What may start before the walk reaches it (`None` = nothing), decided
     /// once per compiled rule version.
     pub(crate) early: Option<EarlyPlan>,
 }
@@ -302,14 +302,14 @@ impl GraphContent {
                             sources.push((expr.value.clone(), ExpressionKind::Standard));
                         }
                     }
-                    // MobileSentrix: also the node's input field (loop/transform), which runs
+                    // Also the node's input field (loop/transform), which runs
                     // as a standard expression on every evaluation.
                     if let Some(field) = &content.transform_attributes.input_field {
                         sources.push((field.clone(), ExpressionKind::Standard));
                     }
                 }
                 DecisionNodeKind::SwitchNode { content } => {
-                    // MobileSentrix: switch conditions (upstream compiles them per evaluation).
+                    // Switch conditions.
                     for statement in content.statements.iter() {
                         if !statement.condition.is_empty() {
                             sources.push((statement.condition.clone(), ExpressionKind::Standard));
@@ -317,8 +317,8 @@ impl GraphContent {
                     }
                 }
                 DecisionNodeKind::DecisionTableNode { content } => {
-                    // MobileSentrix: input fields (set_reference runs each as a standard
-                    // expression) and the transform input field (upstream: per evaluation).
+                    // Input fields (set_reference runs each as a standard
+                    // expression) and the transform input field.
                     for input in content.inputs.iter() {
                         if let Some(field) = input.field.as_ref().filter(|f| !f.is_empty()) {
                             sources.push((field.clone(), ExpressionKind::Standard));

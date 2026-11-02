@@ -1,7 +1,7 @@
 # MobileSentrix fork of gorules/zen
 
-Base: upstream tag `zen-engine-v2.1.6` (all crates 2.1.6). Fork code is marked `MobileSentrix:` where it
-changes an upstream file; new files are `ms_*.rs`, `ms/`, `ms-test/` and the `MS-*.md` documents.
+Base: upstream tag `zen-engine-v2.1.6` (all crates 2.1.6). `git diff zen-engine-v2.1.6` shows every fork change to an
+upstream file; new files are `ms_*.rs`, `ms/`, `ms-test/` and the `MS-*.md` documents.
 The C contract is in [MS-FFI.md](MS-FFI.md); build and test commands are in [MS-BUILD.md](MS-BUILD.md).
 
 ## What it adds, and why
@@ -41,8 +41,8 @@ integration tests are in MS-BUILD.md. The Go wrapper (`ms-zen-go`) carries the b
 ## Updating from upstream
 
 1. `git fetch origin && git rebase <new upstream tag>` on the fork branch (upstream files are
-   changed only in the places marked `MobileSentrix:`; most fork code is in new files).
-2. Resolve conflicts in the marked hunks. For `Cargo.lock`, take upstream's version; the next
+   changed only where that diff shows; most fork code is in new files).
+2. Resolve conflicts in the fork's hunks. For `Cargo.lock`, take upstream's version; the next
    cargo build adds the fork's dependencies (`mimalloc`, `hashlink`, `indexmap`, sqlx, …) back.
 3. Run the tests from MS-BUILD.md (unit, parity, database integration, C smoke test), rebuild
    both libs, and copy them and `bindings/c/zen_engine.h` into ms-zen-go.

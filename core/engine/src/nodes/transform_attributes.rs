@@ -26,7 +26,7 @@ impl TransformAttributesExecution for TransformAttributes {
                 match isolate.run_standard(input_field.deref()) {
                     Ok(input) => input,
                     Err(error) if ctx.config.trace => {
-                        // MobileSentrix: traced, the trace entry names the failing input field.
+                        // Traced, the trace entry names the failing input field.
                         let message = format!("Failed to evaluate expression: {error}");
                         let env = ctx.input_with_nodes();
                         let failure = NodeFailure::expression(

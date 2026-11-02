@@ -20,6 +20,9 @@ pub(crate) mod index;
 
 use cells::CompiledCells;
 
+/// A matched row's trace: its output reference map and its row id and description.
+type RowTraceParts = (TraceMap<Rc<str>, Variable>, TraceMap<Rc<str>, Rc<str>>);
+
 #[derive(Debug, Clone)]
 pub struct DecisionTableNodeHandler;
 
@@ -391,7 +394,7 @@ impl DecisionTableNodeHandler {
         ctx: &DecisionTableContext,
         rule: &HashMap<Arc<str>, Arc<str>>,
         isolate: &mut Isolate,
-    ) -> (TraceMap<Rc<str>, Variable>, TraceMap<Rc<str>, Rc<str>>) {
+    ) -> RowTraceParts {
         let id_str = Rc::<str>::from("_id");
         let description_str = Rc::<str>::from("_description");
 

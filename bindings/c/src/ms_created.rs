@@ -1,11 +1,8 @@
-//! MobileSentrix: compiled content for decisions created from JSON through the C API.
+//! Compiled content for decisions created from JSON through the C API.
 //!
-//! Upstream's `zen_engine_create_decision` hands back an uncompiled graph, so every evaluation of
-//! a created decision (simulate, playground) re-compiles its expressions. Here the graph is
-//! prepared exactly like the loader path (`CachedLoader::prepared`: compile + resolve schemas)
-//! and the prepared graph is remembered per engine in a small LRU keyed by the JSON text, so a
-//! repeated create of the same rule reuses the compiled code. Only rule code is cached, never
-//! evaluation data. Contract documented in MS-FFI.md §1 ("Created decisions").
+//! The graph is prepared exactly like the loader path (`CachedLoader::prepared`: compile +
+//! resolve schemas) and remembered per engine in a small LRU keyed by the JSON text. Only rule
+//! code is cached, never evaluation data. Contract documented in MS-FFI.md §1 ("Created decisions").
 
 use hashlink::LruCache;
 use std::hash::{Hash, Hasher};

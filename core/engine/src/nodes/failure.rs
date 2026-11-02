@@ -1,4 +1,4 @@
-//! MobileSentrix: a structured description of why a node failed, for the failing node's trace
+//! A structured description of why a node failed, for the failing node's trace
 //! entry (`error` on [`crate::DecisionGraphTrace`], see MS-FFI.md "Error trace").
 //!
 //! A node that knows *what* failed (the expression, the placeholder, the query) returns its error

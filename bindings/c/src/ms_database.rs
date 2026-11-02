@@ -1,4 +1,4 @@
-//! MobileSentrix: engine constructors that install the `database` custom-node adapter
+//! Engine constructors that install the `database` custom-node adapter
 //! (`ms-zen-database`) in front of the caller's own custom-node handler.
 //! Contract documented in MS-FFI.md at the repository root.
 

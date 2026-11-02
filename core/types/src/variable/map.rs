@@ -10,9 +10,7 @@ const SPILL_AT: usize = 32;
 
 type Entries = SmallVec<[(Symbol, Variable); INLINE]>;
 
-/// MobileSentrix: the large form keeps insertion order (IndexMap) like the small one. Upstream
-/// uses a hash map with a per-instance random seed, so an object with more than SPILL_AT keys
-/// serialises in a different key order on every run.
+/// The large form keeps insertion order (IndexMap) like the small one.
 type LargeMap = IndexMap<Symbol, Variable, ahash::RandomState>;
 
 #[derive(Clone)]
@@ -29,7 +27,7 @@ impl VariableMap {
         Self(Repr::Small(SmallVec::new()))
     }
 
-    /// MobileSentrix: a map from entries whose keys are known to be distinct, without the
+    /// A map from entries whose keys are known to be distinct, without the
     /// per-insert key search (quadratic up to `SPILL_AT` entries). Same contents and, for a
     /// small map, the same entry order as inserting them one by one.
     pub fn from_unique_entries(entries: Vec<(Symbol, Variable)>) -> Self {

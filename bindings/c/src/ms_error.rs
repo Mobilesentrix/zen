@@ -1,4 +1,4 @@
-//! MobileSentrix: evaluation errors as the JSON `details` of a `ZenResult`, with the structured
+//! Evaluation errors as the JSON `details` of a `ZenResult`, with the structured
 //! part of a result-handling node error (`details`) added and, for a traced evaluation, the
 //! trace the engine collected up to the failing node; see MS-FFI.md §1/§3.
 
@@ -9,8 +9,7 @@ use zen_engine::{EvaluationError, EvaluationTraceKind};
 /// Upstream's serialisation (`type`, `source`, `nodeId`, …) plus:
 /// * `trace` — when `traced` (the caller evaluated with `trace: true`): the partial trace, every
 ///   node that completed plus the failing node with its input, exactly the shape a successful
-///   traced response carries. Upstream's `Serialize` for the error uses trace kind `None` and
-///   emits `"trace": null`, so the caller would lose the steps before the failure.
+///   traced response carries.
 /// * `details` — for a node error raised by the database node's `resultHandling`, an object
 ///   with `reason`, `rowsCount`, `rows`.
 pub(crate) fn evaluation_error_value(error: &EvaluationError, traced: bool) -> Value {

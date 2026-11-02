@@ -1,4 +1,4 @@
-//! MobileSentrix: compiled-decision cache control for engines created through the C API.
+//! Compiled-decision cache control for engines created through the C API.
 //! Contract documented in MS-FFI.md §1 ("Decision cache").
 
 use crate::engine::{ZenEngine, ZenEngineStruct};

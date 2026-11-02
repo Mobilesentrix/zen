@@ -1,4 +1,4 @@
-//! MobileSentrix: whether a database step's SQL only reads.
+//! Whether a database step's SQL only reads.
 //!
 //! Database steps that only read may start ahead of the walk, run their loop items
 //! concurrently and share identical queries inside one evaluation. A statement that may write

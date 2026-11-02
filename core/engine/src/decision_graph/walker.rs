@@ -25,7 +25,7 @@ pub(crate) struct NodeData {
     pub nodes_view: Option<Variable>,
 }
 
-/// MobileSentrix: node outputs by node index in a dense vector (graph indices are dense and
+/// Node outputs by node index in a dense vector (graph indices are dense and
 /// stable). The walker looks up every visited node again after each switch node resets the walk.
 #[derive(Default)]
 pub(crate) struct NodeDataMap {
@@ -64,9 +64,9 @@ pub(crate) struct GraphWalker {
     visited_switch_nodes: Vec<NodeIndex>,
 
     nodes_in_context: bool,
-    /// MobileSentrix: nodes that can read `$nodes` (None = all).
+    /// Nodes that can read `$nodes` (None = all).
     nodes_readers: Option<Arc<ahash::HashSet<Arc<str>>>>,
-    /// MobileSentrix: the decision's opcode cache, for switch conditions.
+    /// The decision's opcode cache, for switch conditions.
     compiled_cache: Option<Arc<OpcodeCache>>,
 }
 
@@ -131,9 +131,9 @@ impl GraphWalker {
         let node_values = self
             .node_data
             .values()
-            .filter_map(|nd| {
+            .map(|nd| {
                 let value = nd.nodes_view.clone().unwrap_or_else(|| nd.data.clone());
-                Some((nd.name.clone(), value))
+                (nd.name.clone(), value)
             })
             .collect();
 
@@ -191,7 +191,7 @@ impl GraphWalker {
         graph: &mut GraphView,
         mut on_trace: Option<F>,
     ) -> Option<NodeIndex> {
-        // MobileSentrix: the clock is read only for a trace (upstream reads it on every call).
+        // The clock is read only for a trace.
         let start = on_trace.is_some().then(Instant::now);
         if self.iter >= ITER_MAX {
             return None;
@@ -212,7 +212,7 @@ impl GraphWalker {
 
             self.ordered.visit(nid);
 
-            // MobileSentrix: only a switch node needs its weight past this point; other nodes
+            // Only a switch node needs its weight past this point; other nodes
             // (revisited after every switch's reset) do not clone and drop the shared Arc.
             let is_switch = matches!(
                 g.node_weight(nid)?.kind,
@@ -235,7 +235,7 @@ impl GraphWalker {
                     }
 
                     let mut statement_iter = content.statements.iter();
-                    // MobileSentrix: the matching statements by reference; trace rows (which
+                    // The matching statements by reference; trace rows (which
                     // clone their ids) are built only for a trace.
                     let valid_statements: Vec<&SwitchStatement> = match content.hit_policy {
                         SwitchStatementHitPolicy::First => statement_iter
@@ -308,7 +308,7 @@ impl GraphWalker {
         None
     }
 
-    /// MobileSentrix: the input `incoming_node_data` will give `node_id`, built before the walk
+    /// The input `incoming_node_data` will give `node_id`, built before the walk
     /// reaches it: an incoming node's output comes from this walk or, for a node run ahead of
     /// it, from `early`. Merged in the same order, so once every incoming node has an output
     /// it is the same value. `None` while an incoming node has no output yet.

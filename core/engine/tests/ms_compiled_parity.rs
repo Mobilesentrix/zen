@@ -1,4 +1,4 @@
-//! MobileSentrix: a compiled decision (prepared graph, compiled switch conditions and input
+//! A compiled decision (prepared graph, compiled switch conditions and input
 //! fields, decision-table cells resolved to bytecode, `$nodes` built only for its readers) must
 //! answer exactly like the same decision evaluated uncompiled, traced and untraced, including
 //! errors.

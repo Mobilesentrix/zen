@@ -1,10 +1,9 @@
-//! MobileSentrix: a decision table's cells resolved to their compiled bytecode once, when the
-//! decision is compiled, so a row is evaluated without hashing every cell's source text to find
-//! its bytecode in the opcode cache on every evaluation.
+//! A decision table's cells resolved to their compiled bytecode once, when the
+//! decision is compiled.
 //!
 //! The bytecode is the very entry of the decision's `OpcodeCache` (same compile, same `Arc`).
-//! A cell that is not in the cache (it failed to compile) is `None`, and the table falls back
-//! to running it by source text, as upstream does, which reproduces the same error.
+//! A cell that is not in the cache (it failed to compile) is `None`, and the table runs it by
+//! source text, which reproduces the same error.
 use ahash::HashMap;
 use std::sync::Arc;
 use zen_expression::compiler::Opcode;

@@ -34,12 +34,12 @@ pub enum ZenError {
         message: String,
     },
 
-    /// MobileSentrix: invalid database connection map (code 12).
+    /// Invalid database connection map (code 12).
     DatabaseConfigError {
         message: String,
     },
 
-    /// MobileSentrix: a Rust panic caught at the C boundary (code 13); see guard.rs.
+    /// A Rust panic caught at the C boundary (code 13); see guard.rs.
     Panic {
         message: String,
     },

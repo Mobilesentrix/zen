@@ -13,7 +13,7 @@ and updating an `Arc` counter each time cached bytecode runs.
 
 ## Decision
 
-Each change is marked `MobileSentrix:` in the code so the fork stays easy to rebase.
+Each change stays small so the fork stays easy to rebase; `git diff zen-engine-v2.1.6` shows them.
 
 - **Graph view** (`core/engine/src/decision_graph/view.rs`). Every evaluation shares the
   decision's prepared graph and records the edges that switch nodes remove (branches not taken,

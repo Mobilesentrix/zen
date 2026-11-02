@@ -5,7 +5,7 @@ use serde_json::{Map, Number, Value};
 use sqlx::mysql::{MySqlRow, MySqlValueRef};
 use sqlx::postgres::{PgRow, PgValueRef};
 use sqlx::types::chrono;
-use sqlx::{Column, Decode, MySql, Postgres, Row, TypeInfo, ValueRef};
+use sqlx::{Column, ColumnIndex, Database, Decode, MySql, Postgres, Row, TypeInfo, ValueRef};
 
 pub(crate) type DecodeResult = Result<Value, String>;
 
@@ -18,16 +18,29 @@ pub(crate) fn column_types<R: Row>(row: &R) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn mysql_row(row: &MySqlRow, types: &[String]) -> DecodeResult {
+/// One row as a JSON object, each column decoded by `decode_value` from its upper-cased type name.
+fn row_object<'r, R>(
+    row: &'r R,
+    types: &[String],
+    decode_value: impl Fn(<R::Database as Database>::ValueRef<'r>, &str) -> DecodeResult,
+) -> DecodeResult
+where
+    R: Row,
+    usize: ColumnIndex<R>,
+{
     let mut object = Map::with_capacity(row.len());
     for (index, column) in row.columns().iter().enumerate() {
         let raw = row.try_get_raw(index).map_err(|e| e.to_string())?;
-        let type_name = types.get(index).map(String::as_str).unwrap_or("");
-        let mut value = mysql_value(raw, type_name)?;
+        let type_name = types.get(index).map_or("", String::as_str);
+        let mut value = decode_value(raw, type_name)?;
         parse_json_strings(&mut value);
         object.insert(column.name().to_owned(), value);
     }
     Ok(Value::Object(object))
+}
+
+pub(crate) fn mysql_row(row: &MySqlRow, types: &[String]) -> DecodeResult {
+    row_object(row, types, mysql_value)
 }
 
 fn mysql_as<T>(value: MySqlValueRef<'_>) -> Result<T, String>
@@ -43,13 +56,12 @@ fn mysql_value(value: MySqlValueRef<'_>, type_name: &str) -> DecodeResult {
     }
     match type_name {
         "JSON" => mysql_as::<Value>(value),
-        "BIT" => mysql_as::<u64>(value).map(Value::from),
-        "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "MEDIUMINT UNSIGNED" | "INT UNSIGNED"
-        | "BIGINT UNSIGNED" => mysql_as::<u64>(value).map(Value::from),
+        "BIT" | "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "MEDIUMINT UNSIGNED"
+        | "INT UNSIGNED" | "BIGINT UNSIGNED" => mysql_as::<u64>(value).map(Value::from),
         "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" => {
             mysql_as::<i64>(value).map(Value::from)
         }
-        "FLOAT" => mysql_as::<f32>(value).map(|v| float(v as f64)),
+        "FLOAT" => mysql_as::<f32>(value).map(|v| float(f64::from(v))),
         "DOUBLE" => mysql_as::<f64>(value).map(float),
         "DECIMAL" | "NUMERIC" | "NEWDECIMAL" => mysql_as::<String>(value).map(decimal_string),
         "BOOL" | "BOOLEAN" => mysql_as::<bool>(value).map(Value::Bool),
@@ -82,15 +94,7 @@ fn mysql_value(value: MySqlValueRef<'_>, type_name: &str) -> DecodeResult {
 }
 
 pub(crate) fn pg_row(row: &PgRow, types: &[String]) -> DecodeResult {
-    let mut object = Map::with_capacity(row.len());
-    for (index, column) in row.columns().iter().enumerate() {
-        let raw = row.try_get_raw(index).map_err(|e| e.to_string())?;
-        let type_name = types.get(index).map(String::as_str).unwrap_or("");
-        let mut value = pg_value(raw, type_name)?;
-        parse_json_strings(&mut value);
-        object.insert(column.name().to_owned(), value);
-    }
-    Ok(Value::Object(object))
+    row_object(row, types, pg_value)
 }
 
 fn pg_as<T>(value: PgValueRef<'_>) -> Result<T, String>
@@ -110,7 +114,7 @@ fn pg_value(value: PgValueRef<'_>, type_name: &str) -> DecodeResult {
         "INT4" => pg_as::<i32>(value).map(Value::from),
         "INT8" => pg_as::<i64>(value).map(Value::from),
         "OID" => pg_as::<sqlx::postgres::types::Oid>(value).map(|o| Value::from(o.0)),
-        "FLOAT4" => pg_as::<f32>(value).map(|v| float(v as f64)),
+        "FLOAT4" => pg_as::<f32>(value).map(|v| float(f64::from(v))),
         "FLOAT8" => pg_as::<f64>(value).map(float),
         "NUMERIC" => pg_as::<rust_decimal::Decimal>(value).map(|d| decimal_string(d.to_string())),
         "JSON" | "JSONB" => pg_as::<Value>(value),
@@ -148,9 +152,7 @@ fn pg_value(value: PgValueRef<'_>, type_name: &str) -> DecodeResult {
 }
 
 fn float(v: f64) -> Value {
-    Number::from_f64(v)
-        .map(Value::Number)
-        .unwrap_or(Value::Null)
+    Number::from_f64(v).map_or(Value::Null, Value::Number)
 }
 
 /// Exact decimals stay exact when serde_json has `arbitrary_precision` (the FFI build);
@@ -162,7 +164,7 @@ fn decimal_string(s: String) -> Value {
     }
 }
 
-/// StarRocks returns `to_json(named_struct(...))` / JSON-shaped text as strings; parse them.
+/// Parses JSON-shaped text in place (StarRocks returns `to_json(...)` results as strings).
 pub(crate) fn parse_json_strings(value: &mut Value) {
     match value {
         Value::String(s) => {

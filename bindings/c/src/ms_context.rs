@@ -1,15 +1,11 @@
-//! MobileSentrix: the evaluation context parsed straight into a `Variable`.
+//! The evaluation context parsed straight into a `Variable`.
 //!
-//! Upstream parses the context JSON into a `serde_json::Value` and then converts that tree into
-//! a `Variable` (`Variable::try_from_value`): two full trees per call. This builds the `Variable`
-//! in one pass with the same result, entry for entry:
-//! - object keys come out in `serde_json::Map` order: without serde_json's `preserve_order`
-//!   feature (not enabled in this workspace) that map is a `BTreeMap<String, _>`, so keys are
-//!   sorted by their bytes and a repeated key keeps its last value;
-//! - numbers convert exactly like `Variable::try_from_value` (arbitrary precision: the literal
-//!   text through `Decimal::from_str_exact`, then `from_scientific`, then `f64`), and a number
-//!   no `Decimal` can hold is an error, as there ([`OutOfRange::Error`]); upstream's decision API
-//!   converts with `Variable::from(Value)` instead, which turns such a number into `null`
+//! Same result as parsing a `serde_json::Value` and converting it, entry for entry:
+//! - object keys come out in `serde_json::Map` order (without `preserve_order`, a `BTreeMap`):
+//!   sorted by their bytes, a repeated key keeping its last value;
+//! - numbers convert exactly like `Variable::try_from_value` (the literal text through
+//!   `Decimal::from_str_exact`, then `from_scientific`, then `f64`). A number no `Decimal` can
+//!   hold is an error ([`OutOfRange::Error`]) or, as `Variable::from(Value)` does, `null`
 //!   ([`OutOfRange::Null`]).
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;

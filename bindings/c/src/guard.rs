@@ -1,7 +1,6 @@
-//! MobileSentrix: panic guard for every `extern "C"` entry point.
+//! Panic guard for every `extern "C"` entry point.
 //!
-//! A panic that reaches the C boundary aborts the whole process (Rust >= 1.81 turns an
-//! unwind out of an `extern "C"` function into an abort). Every exported function therefore
+//! A panic that reaches the C boundary aborts the whole process, so every exported function
 //! runs its body under `catch_unwind`; a panic becomes error code 13 (`Panic`) with the
 //! panic message in `details`, a null pointer for the raw-pointer constructors, or a no-op
 //! for the `*_free` functions. The engine stays usable afterwards: its shared state is

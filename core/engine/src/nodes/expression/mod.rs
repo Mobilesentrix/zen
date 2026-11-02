@@ -42,7 +42,7 @@ impl NodeHandler for ExpressionNodeHandler {
                     if !ctx.config.trace {
                         return ctx.error(message);
                     }
-                    // MobileSentrix: traced, the failing node's trace entry says what failed.
+                    // Traced, the failing node's trace entry says what failed.
                     let failure = NodeFailure::expression(
                         FailurePart::Expression,
                         &expression.value,

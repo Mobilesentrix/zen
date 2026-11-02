@@ -1,4 +1,4 @@
-//! MobileSentrix: database steps that start before the walk reaches them, so a step's wait on
+//! Database steps that start before the walk reaches them, so a step's wait on
 //! its database overlaps other work of the same evaluation (another step's wait, or nodes the
 //! walk runs meanwhile).
 //!

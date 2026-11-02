@@ -17,7 +17,7 @@ of thread-local runtimes, and Rust embedders bring their own. Two things follow 
 
 ## Decision
 
-- Database connection pools (`ms/database`, `pool.rs`) live on a dedicated runtime that is always
+- Database connection pools (`ms/database`, `databases.rs`) live on a dedicated runtime that is always
   driven. Queries are spawned onto it and the caller awaits the `JoinHandle`, which is
   executor-agnostic. Pools are created once per engine.
 - The runtime used by every C-API evaluation (`bindings/c/src/mt.rs`) is a multi-thread runtime

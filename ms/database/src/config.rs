@@ -113,30 +113,35 @@ pub(crate) fn session_statements(
     variables
         .iter()
         .map(|(variable, value)| {
-            let valid_name = !variable.is_empty()
-                && variable
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-                && variable
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
-            if !valid_name {
+            if !is_session_variable_name(variable) {
                 return Err(format!(
                     "connection \"{name}\": sessionVariables name \"{variable}\" is not an identifier"
                 ));
             }
-            let lowered = value.to_ascii_lowercase();
-            let literal = if is_plain_number(value)
-                || matches!(lowered.as_str(), "true" | "false" | "on" | "off")
-            {
-                value.clone()
-            } else {
-                string_literal(backend, value)
-            };
+            let literal = session_value_literal(backend, value);
             Ok(format!("SET {variable} = {literal}"))
         })
         .collect()
+}
+
+fn is_session_variable_name(variable: &str) -> bool {
+    variable
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && variable
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+}
+
+/// Plain numbers and `true`/`false`/`on`/`off` are sent bare, anything else as a string literal.
+fn session_value_literal(backend: Backend, value: &str) -> String {
+    let lowered = value.to_ascii_lowercase();
+    if is_plain_number(value) || matches!(lowered.as_str(), "true" | "false" | "on" | "off") {
+        value.to_string()
+    } else {
+        string_literal(backend, value)
+    }
 }
 
 /// `-12`, `3`, `0.25`: digits with an optional sign and one decimal point (no exponent, no
