@@ -1,9 +1,11 @@
 [package]
 name = "zen-macros"
 description = "Zen Helper Macros"
-version = "0.55.0"
+version = "2.1.6"
 edition = "2024"
 license = "MIT"
+repository = "https://github.com/gorules/zen.git"
+homepage = "https://gorules.io"
 
 [lib]
 proc-macro = true

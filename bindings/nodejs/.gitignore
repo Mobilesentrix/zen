@@ -1,6 +1,8 @@
 *.node
 *.internal.js
 *.tgz
-temp.d.ts
+index.d.ts
 *.wasm
 npm/
+zen-engine.wasip1*
+zen-engine.wasm32-wasip1.*

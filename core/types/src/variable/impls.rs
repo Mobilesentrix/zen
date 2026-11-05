@@ -13,13 +13,13 @@ pub trait ToVariable {
 
 impl ToVariable for String {
     fn to_variable(&self) -> Variable {
-        Variable::String(Rc::from(self.as_str()))
+        Variable::String((self.as_str()).into())
     }
 }
 
 impl ToVariable for str {
     fn to_variable(&self) -> Variable {
-        Variable::String(Rc::from(self))
+        Variable::String((self).into())
     }
 }
 
@@ -92,7 +92,7 @@ where
     fn to_variable(&self) -> Variable {
         Variable::from_object(
             self.iter()
-                .map(|(k, v)| (k.clone(), v.to_variable()))
+                .map(|(k, v)| (crate::symbol::Symbol::from(k.as_ref()), v.to_variable()))
                 .collect(),
         )
     }
@@ -106,7 +106,36 @@ where
     fn to_variable(&self) -> Variable {
         Variable::from_object(
             self.iter()
-                .map(|(k, v)| (Rc::<str>::from(k.deref()), v.to_variable()))
+                .map(|(k, v)| (crate::symbol::Symbol::from(k.deref()), v.to_variable()))
+                .collect(),
+        )
+    }
+}
+
+/// Insertion-ordered maps (traces) keep their order in the variable.
+impl<V, S> ToVariable for indexmap::IndexMap<Rc<str>, V, S>
+where
+    V: ToVariable,
+    S: std::hash::BuildHasher,
+{
+    fn to_variable(&self) -> Variable {
+        Variable::from_object(
+            self.iter()
+                .map(|(k, v)| (crate::symbol::Symbol::from(k.as_ref()), v.to_variable()))
+                .collect(),
+        )
+    }
+}
+
+impl<V, S> ToVariable for indexmap::IndexMap<Arc<str>, V, S>
+where
+    V: ToVariable,
+    S: std::hash::BuildHasher,
+{
+    fn to_variable(&self) -> Variable {
+        Variable::from_object(
+            self.iter()
+                .map(|(k, v)| (crate::symbol::Symbol::from(k.deref()), v.to_variable()))
                 .collect(),
         )
     }
@@ -120,7 +149,7 @@ where
     fn to_variable(&self) -> Variable {
         Variable::from_object(
             self.iter()
-                .map(|(k, v)| (Rc::from(k.as_str()), v.to_variable()))
+                .map(|(k, v)| (crate::symbol::Symbol::from(k.as_str()), v.to_variable()))
                 .collect(),
         )
     }

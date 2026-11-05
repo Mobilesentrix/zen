@@ -1,0 +1,27 @@
+mod cursor;
+mod diagnostic;
+mod edit;
+mod error;
+mod request;
+mod result;
+mod search;
+
+pub use cursor::{
+    Cursor, CursorTarget, ExpressionKind, InspectResult, PrepareRename, ReferenceKind,
+    ReferenceSite, RenameTarget, SlotRole,
+};
+pub(crate) use diagnostic::SpanOps;
+pub use diagnostic::{
+    Diagnostic, DiagnosticArgs, DiagnosticCode, DiagnosticLocation, Severity, Span,
+};
+pub use edit::{EngineEdit, PathEdit};
+pub use error::{EvaluationError, InputValidationError};
+pub use request::{EvaluateRequest, ScopeRequest};
+pub use result::{
+    BlockExecution, BlockRef, BlockTrace, Completion, ConditionTrace, ConditionalSchema,
+    DecisionTableExtras, DependencyNode, Dictionary, DictionaryEntryInfo, DiscriminantVariant,
+    DiscriminatedUnion, Entity, EntityField, EvaluationResult, FieldOrigin, Global,
+    GuardedProperty, InputProperty, InstanceTarget, OutputProperty, PropertyKind, SchemaFieldKind,
+    SchemaGroup, Trace, WriteConflict, WriteTrace,
+};
+pub use search::{SearchHit, SearchHitKind};

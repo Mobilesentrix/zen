@@ -1,6 +1,6 @@
 //! # ZEN Engine
 //!
-//! ZEN Engine is business friendly Open-Source Business Rules Engine (BRE) which executes decision
+//! ZEN Engine is business-friendly Open-Source Business Rules Engine (BRE) which executes decision
 //! models according to the GoRules JSON Decision Model (JDM) standard. It's written in Rust and
 //! provides native bindings for NodeJS and Python.
 //!
@@ -48,7 +48,6 @@
 //!
 //! async fn evaluate() {
 //!     let engine = DecisionEngine::new(FilesystemLoader::new(FilesystemLoaderOptions {
-//!         keep_in_memory: true, // optionally, keep in memory for increase performance
 //!         root: "/app/decisions"
 //!     }));
 //!     
@@ -119,9 +118,11 @@
 //! }
 //! ```
 
+#![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used)]
 #![allow(clippy::module_inception)]
 
+mod analysis;
 mod config;
 mod decision;
 mod decision_graph;
@@ -130,12 +131,19 @@ pub mod error;
 pub mod loader;
 pub mod model;
 pub mod nodes;
+pub mod policy;
+pub mod workspace;
+
+pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use config::ZEN_CONFIG;
 pub use decision::Decision;
-pub use decision_graph::{DecisionGraphResponse, DecisionGraphTrace, DecisionGraphValidationError};
+pub use decision_graph::{
+    DecisionGraphResponse, DecisionGraphTrace, DecisionGraphValidationError, EvaluationTrace,
+};
 pub use engine::{
     DecisionEngine, EvaluationOptions, EvaluationSerializedOptions, EvaluationTraceKind,
 };
-pub use error::EvaluationError;
+pub use error::{CompileFailure, ContentKindError, EvaluationError};
+pub use workspace::Workspace;
 pub use zen_expression::Variable;

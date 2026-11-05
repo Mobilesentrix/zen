@@ -5,47 +5,110 @@ use crate::lexer::token::{
     Bracket, ComparisonOperator, Identifier, LogicalOperator, Operator, Token, TokenKind,
 };
 use crate::lexer::{LexerError, QuotationMark, TemplateString};
+use bumpalo::collections::Vec as BumpVec;
+use bumpalo::Bump;
 use std::str::FromStr;
 
 #[derive(Debug, Default)]
-pub struct Lexer<'arena> {
-    tokens: Vec<Token<'arena>>,
+pub struct Lexer {
+    capacity_hint: usize,
 }
 
-impl<'arena> Lexer<'arena> {
+#[derive(Debug)]
+pub struct LenientTokens<'arena> {
+    pub tokens: BumpVec<'arena, Token<'arena>>,
+    pub open_string: Option<(QuotationMark, u32)>,
+}
+
+impl Lexer {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn tokenize(&mut self, source: &'arena str) -> LexerResult<&[Token<'arena>]> {
-        self.tokens.clear();
+    pub fn tokenize<'arena>(
+        &mut self,
+        bump: &'arena Bump,
+        source: &'arena str,
+    ) -> LexerResult<BumpVec<'arena, Token<'arena>>> {
+        let mut tokens = BumpVec::with_capacity_in(self.capacity_hint, bump);
 
-        Scanner::new(source, &mut self.tokens).scan()?;
-        Ok(&self.tokens)
+        Scanner::new(source, &mut tokens).scan()?;
+        self.capacity_hint = self.capacity_hint.max(tokens.len());
+        Ok(tokens)
+    }
+
+    pub fn tokenize_lenient<'arena>(
+        &mut self,
+        bump: &'arena Bump,
+        source: &'arena str,
+    ) -> LexerResult<LenientTokens<'arena>> {
+        let mut tokens = BumpVec::with_capacity_in(self.capacity_hint, bump);
+
+        let mut scanner = Scanner::new(source, &mut tokens);
+        scanner.lenient = true;
+        scanner.scan()?;
+        let open_string = scanner.open_string;
+        self.capacity_hint = self.capacity_hint.max(tokens.len());
+        Ok(LenientTokens {
+            tokens,
+            open_string,
+        })
     }
 }
 
 struct Scanner<'arena, 'self_ref> {
     cursor: Cursor<'arena>,
-    tokens: &'self_ref mut Vec<Token<'arena>>,
+    tokens: &'self_ref mut BumpVec<'arena, Token<'arena>>,
     source: &'arena str,
+    lenient: bool,
+    open_string: Option<(QuotationMark, u32)>,
 }
 
 impl<'arena, 'self_ref> Scanner<'arena, 'self_ref> {
-    pub fn new(source: &'arena str, tokens: &'self_ref mut Vec<Token<'arena>>) -> Self {
+    pub fn new(source: &'arena str, tokens: &'self_ref mut BumpVec<'arena, Token<'arena>>) -> Self {
         Self {
             cursor: Cursor::from(source),
             source,
             tokens,
+            lenient: false,
+            open_string: None,
         }
     }
 
     pub fn scan(&mut self) -> LexerResult<()> {
         while let Some(cursor_item) = self.cursor.peek() {
-            self.scan_cursor_item(cursor_item)?;
+            let pushed = self.tokens.len();
+            match self.scan_cursor_item(cursor_item) {
+                Ok(()) => {}
+                Err(_) if self.lenient => {
+                    self.tokens.truncate(pushed);
+                    self.recover(cursor_item.0);
+                }
+                Err(error) => return Err(error),
+            }
         }
 
         Ok(())
+    }
+
+    fn recover(&mut self, start: usize) {
+        let consumed = self
+            .cursor
+            .peek()
+            .map(|(next, _)| next)
+            .unwrap_or(self.source.len());
+        let mut end = consumed.max(start + 1).min(self.source.len());
+        while !self.source.is_char_boundary(end) {
+            end += 1;
+        }
+        while self.cursor.peek().is_some_and(|(next, _)| next < end) {
+            self.cursor.next();
+        }
+        self.push(Token {
+            kind: TokenKind::Operator(Operator::Semi),
+            span: (start as u32, end as u32),
+            value: &self.source[start..end],
+        });
     }
 
     pub(crate) fn scan_cursor_item(&mut self, cursor_item: CursorItem) -> LexerResult<()> {
@@ -76,14 +139,16 @@ impl<'arena, 'self_ref> Scanner<'arena, 'self_ref> {
     }
 
     fn next(&self) -> LexerResult<CursorItem> {
-        self.cursor.next().ok_or_else(|| {
-            let (a, b) = self.cursor.peek_back().unwrap_or((0, ' '));
+        self.cursor.next().ok_or_else(|| self.eof_error())
+    }
 
-            LexerError::UnexpectedEof {
-                symbol: b,
-                position: a as u32,
-            }
-        })
+    fn eof_error(&self) -> LexerError {
+        let (a, b) = self.cursor.peek_back().unwrap_or((0, ' '));
+
+        LexerError::UnexpectedEof {
+            symbol: b,
+            position: a as u32,
+        }
     }
 
     fn push(&mut self, token: Token<'arena>) {
@@ -102,7 +167,27 @@ impl<'arena, 'self_ref> Scanner<'arena, 'self_ref> {
         let mut in_expression = false;
         let mut str_start = start + 1;
         loop {
-            let (e, c) = self.next()?;
+            let Some((e, c)) = self.cursor.next() else {
+                let end = self.source.len();
+                if self.lenient && !in_expression {
+                    self.open_string = Some((QuotationMark::Backtick, start as u32));
+                }
+                if !in_expression && str_start < end {
+                    self.tokens.push(Token {
+                        kind: TokenKind::Literal,
+                        span: (str_start as u32, end as u32),
+                        value: &self.source[str_start..end],
+                    });
+                }
+
+                self.tokens.push(Token {
+                    kind: TokenKind::QuotationMark(QuotationMark::Backtick),
+                    span: (end as u32, end as u32),
+                    value: QuotationMark::Backtick.into(),
+                });
+
+                break;
+            };
 
             match (c, in_expression) {
                 ('`', _) => {
@@ -153,7 +238,14 @@ impl<'arena, 'self_ref> Scanner<'arena, 'self_ref> {
                 }
                 (_, true) => {
                     self.cursor.back();
-                    self.scan_cursor_item((e, c))?;
+                    let pushed = self.tokens.len();
+                    if let Err(error) = self.scan_cursor_item((e, c)) {
+                        if !self.lenient {
+                            return Err(error);
+                        }
+                        self.tokens.truncate(pushed);
+                        self.recover(e);
+                    }
                 }
             }
         }
@@ -163,15 +255,24 @@ impl<'arena, 'self_ref> Scanner<'arena, 'self_ref> {
 
     fn string(&mut self, quote_kind: QuotationMark) -> LexerResult<()> {
         let (start, opener) = self.next()?;
-        let end: usize;
+        let mut closed: Option<usize> = None;
 
-        loop {
-            let (e, c) = self.next()?;
+        while let Some((e, c)) = self.cursor.next() {
             if c == opener {
-                end = e;
+                closed = Some(e);
                 break;
             }
         }
+
+        let (end, close_span) = match closed {
+            Some(e) => (e, (e as u32, (e + 1) as u32)),
+            None if self.lenient => {
+                let e = self.source.len();
+                self.open_string = Some((quote_kind, start as u32));
+                (e, (e as u32, e as u32))
+            }
+            None => return Err(self.eof_error()),
+        };
 
         self.push(Token {
             kind: TokenKind::QuotationMark(quote_kind),
@@ -187,7 +288,7 @@ impl<'arena, 'self_ref> Scanner<'arena, 'self_ref> {
 
         self.push(Token {
             kind: TokenKind::QuotationMark(quote_kind),
-            span: (end as u32, (end + 1) as u32),
+            span: close_span,
             value: quote_kind.into(),
         });
 

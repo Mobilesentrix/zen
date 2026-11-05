@@ -1,0 +1,66 @@
+{
+  "about": "Product listing search. Three versions of the same rule. `${S}` is the schema (bench_listing locally; a real read-only DEV mapping is a copy of this file with its own SQL). Inputs: model?, brands?[], colour?, quality?, partType?, inStock?, page?, pageSize?. Output: skus[] ordered by rank_score DESC, sku ASC.",
+  "naive": {
+    "about": "What an analyst builds today: one lookup per question (devices, compatible products, products, stock), joined, filtered, sorted and paged in a function step.",
+    "nodes": [
+      {"id": "in", "name": "Request", "type": "inputNode", "position": {"x": 0, "y": 0}},
+      {"id": "dev", "name": "Devices", "type": "customNode", "position": {"x": 200, "y": 0},
+       "content": {"kind": "database", "config": {"outputPath": "devices", "passThrough": true,
+         "query": "SELECT device_id FROM ${S}.devices WHERE {{ (model ?? '') != '' or len(brands ?? []) > 0 ? 1 : 0 }} = 1 AND ({{ model ?? '' }} = '' OR model_name = {{ model ?? '' }}) AND ({{ len(brands ?? []) }} = 0 OR brand IN ({{ len(brands ?? []) == 0 ? [''] : brands }}))"}}},
+      {"id": "cmp", "name": "Compatible", "type": "customNode", "position": {"x": 400, "y": 0},
+       "content": {"kind": "database", "config": {"outputPath": "compat", "passThrough": true,
+         "query": "SELECT DISTINCT product_id FROM ${S}.compatibility WHERE device_id IN ({{ len(devices.rows) == 0 ? [-1] : map(devices.rows, #.device_id) }})"}}},
+      {"id": "prd", "name": "Products", "type": "customNode", "position": {"x": 600, "y": 0},
+       "content": {"kind": "database", "config": {"outputPath": "products", "passThrough": true,
+         "query": "SELECT product_id, sku, rank_score FROM ${S}.products WHERE status = 'active' AND ({{ colour ?? '' }} = '' OR colour = {{ colour ?? '' }}) AND ({{ quality ?? '' }} = '' OR quality = {{ quality ?? '' }}) AND ({{ partType ?? '' }} = '' OR part_type = {{ partType ?? '' }})"}}},
+      {"id": "stk", "name": "Stock", "type": "customNode", "position": {"x": 800, "y": 0},
+       "content": {"kind": "database", "config": {"outputPath": "stock", "passThrough": true,
+         "query": "SELECT product_id FROM ${S}.inventory GROUP BY product_id HAVING {{ inStock ?? false ? 1 : 0 }} = 1 AND SUM(qty) > 0"}}},
+      {"id": "fn", "name": "Join, filter, sort, page", "type": "functionNode", "position": {"x": 1000, "y": 0},
+       "content": {"source": "export const handler = async (input) => {\n  const byDevice = (input.model ?? '') !== '' || (input.brands ?? []).length > 0;\n  const compat = new Set(input.compat.rows.map((r) => r.product_id));\n  const stock = new Set(input.stock.rows.map((r) => r.product_id));\n  const list = input.products.rows.filter((p) => (!byDevice || compat.has(p.product_id)) && (!input.inStock || stock.has(p.product_id)));\n  list.sort((a, b) => b.rank_score - a.rank_score || (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));\n  const size = input.pageSize ?? 24;\n  const page = input.page ?? 0;\n  return { skus: list.slice(page * size, page * size + size).map((p) => p.sku) };\n};\n"}},
+      {"id": "out", "name": "Response", "type": "outputNode", "position": {"x": 1200, "y": 0}}
+    ],
+    "edges": [
+      {"id": "e1", "sourceId": "in", "targetId": "dev", "type": "edge"},
+      {"id": "e2", "sourceId": "dev", "targetId": "cmp", "type": "edge"},
+      {"id": "e3", "sourceId": "cmp", "targetId": "prd", "type": "edge"},
+      {"id": "e4", "sourceId": "prd", "targetId": "stk", "type": "edge"},
+      {"id": "e5", "sourceId": "stk", "targetId": "fn", "type": "edge"},
+      {"id": "e6", "sourceId": "fn", "targetId": "out", "type": "edge"}
+    ]
+  },
+  "single_today": {
+    "about": "One query with today's syntax: optional filters as `({{ x ?? '' }} = '' OR col = {{ x ?? '' }})`, the device and stock questions as sub-queries, ORDER BY + LIMIT in the database. StarRocks cannot bind LIMIT/OFFSET, so paging is impossible here: page 0, 24 rows only.",
+    "nodes": [
+      {"id": "in", "name": "Request", "type": "inputNode", "position": {"x": 0, "y": 0}},
+      {"id": "db", "name": "Search", "type": "customNode", "position": {"x": 200, "y": 0},
+       "content": {"kind": "database", "config": {"outputPath": "result", "passThrough": false,
+         "query": "SELECT p.sku FROM ${S}.products p WHERE p.status = 'active' AND ({{ colour ?? '' }} = '' OR p.colour = {{ colour ?? '' }}) AND ({{ quality ?? '' }} = '' OR p.quality = {{ quality ?? '' }}) AND ({{ partType ?? '' }} = '' OR p.part_type = {{ partType ?? '' }}) AND ({{ (model ?? '') == '' and len(brands ?? []) == 0 ? 1 : 0 }} = 1 OR EXISTS (SELECT 1 FROM ${S}.compatibility c JOIN ${S}.devices d ON d.device_id = c.device_id WHERE c.product_id = p.product_id AND ({{ model ?? '' }} = '' OR d.model_name = {{ model ?? '' }}) AND ({{ len(brands ?? []) }} = 0 OR d.brand IN ({{ len(brands ?? []) == 0 ? [''] : brands }})))) AND ({{ inStock ?? false ? 1 : 0 }} = 0 OR p.product_id IN (SELECT product_id FROM ${S}.inventory GROUP BY product_id HAVING SUM(qty) > 0)) ORDER BY p.rank_score DESC, p.sku LIMIT 24"}}},
+      {"id": "x", "name": "SKUs", "type": "expressionNode", "position": {"x": 400, "y": 0},
+       "content": {"expressions": [{"id": "x1", "key": "skus", "value": "map(result.rows, #.sku)"}]}},
+      {"id": "out", "name": "Response", "type": "outputNode", "position": {"x": 600, "y": 0}}
+    ],
+    "edges": [
+      {"id": "e1", "sourceId": "in", "targetId": "db", "type": "edge"},
+      {"id": "e2", "sourceId": "db", "targetId": "x", "type": "edge"},
+      {"id": "e3", "sourceId": "x", "targetId": "out", "type": "edge"}
+    ]
+  },
+  "single_new": {
+    "about": "One query with the new template syntax: `{{#if guard}} … {{/if}}` drops a filter the request does not ask for, LIMIT/OFFSET take a checked whole number. Every value is still a bound parameter.",
+    "nodes": [
+      {"id": "in", "name": "Request", "type": "inputNode", "position": {"x": 0, "y": 0}},
+      {"id": "db", "name": "Search", "type": "customNode", "position": {"x": 200, "y": 0},
+       "content": {"kind": "database", "config": {"outputPath": "result", "passThrough": false,
+         "query": "SELECT p.sku FROM ${S}.products p WHERE p.status = 'active'\n{{#if colour}} AND p.colour = {{ colour }} {{/if}}\n{{#if quality}} AND p.quality = {{ quality }} {{/if}}\n{{#if partType}} AND p.part_type = {{ partType }} {{/if}}\n{{#if model or brands}} AND EXISTS (SELECT 1 FROM ${S}.compatibility c JOIN ${S}.devices d ON d.device_id = c.device_id WHERE c.product_id = p.product_id {{#if model}} AND d.model_name = {{ model }} {{/if}} {{#if brands}} AND d.brand IN ({{ brands }}) {{/if}}) {{/if}}\n{{#if inStock}} AND p.product_id IN (SELECT product_id FROM ${S}.inventory GROUP BY product_id HAVING SUM(qty) > 0) {{/if}}\nORDER BY p.rank_score DESC, p.sku\nLIMIT {{ pageSize ?? 24 }} OFFSET {{ (page ?? 0) * (pageSize ?? 24) }}"}}},
+      {"id": "x", "name": "SKUs", "type": "expressionNode", "position": {"x": 400, "y": 0},
+       "content": {"expressions": [{"id": "x1", "key": "skus", "value": "map(result.rows, #.sku)"}]}},
+      {"id": "out", "name": "Response", "type": "outputNode", "position": {"x": 600, "y": 0}}
+    ],
+    "edges": [
+      {"id": "e1", "sourceId": "in", "targetId": "db", "type": "edge"},
+      {"id": "e2", "sourceId": "db", "targetId": "x", "type": "edge"},
+      {"id": "e3", "sourceId": "x", "targetId": "out", "type": "edge"}
+    ]
+  }
+}

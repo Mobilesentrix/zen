@@ -57,16 +57,110 @@ sourceSets {
         compileClasspath += sourceSets["main"].compileClasspath
         runtimeClasspath += sourceSets["main"].runtimeClasspath
     }
+
+    val testsJava by creating {
+        java {
+            srcDirs("tests/java")
+        }
+
+        compileClasspath += sourceSets["java"].output + sourceSets["java"].compileClasspath
+        runtimeClasspath += sourceSets["java"].output + sourceSets["java"].runtimeClasspath
+    }
+
+    val testsKotlin by creating {
+        kotlin {
+            srcDirs("tests/kotlin")
+        }
+
+        compileClasspath += sourceSets["kotlin"].output + sourceSets["kotlin"].compileClasspath
+        runtimeClasspath += sourceSets["kotlin"].output + sourceSets["kotlin"].runtimeClasspath
+    }
 }
 
 
 dependencies {
-    implementation("net.java.dev.jna:jna:5.17.0")
+    "kotlinImplementation"("net.java.dev.jna:jna:5.17.0")
     "kotlinImplementation"("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    "kotlinAndroidImplementation"("net.java.dev.jna:jna:5.17.0")
+    "kotlinAndroidImplementation"("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    "testsJavaImplementation"("org.junit.jupiter:junit-jupiter:5.11.4")
+    "testsJavaImplementation"("com.fasterxml.jackson.core:jackson-databind:2.18.2")
+    "testsJavaRuntimeOnly"("org.junit.platform:junit-platform-launcher:1.11.4")
+    "testsKotlinImplementation"("org.junit.jupiter:junit-jupiter:5.11.4")
+    "testsKotlinImplementation"("com.fasterxml.jackson.core:jackson-databind:2.18.2")
+    "testsKotlinImplementation"("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    "testsKotlinImplementation"("net.java.dev.jna:jna:5.17.0")
+    "testsKotlinRuntimeOnly"("org.junit.platform:junit-platform-launcher:1.11.4")
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release = 21
+}
+
+tasks.named<JavaCompile>("compileJavaJava") {
+    options.release = 22
+}
+
+tasks.named<JavaCompile>("compileTestsJavaJava") {
+    options.release = 22
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
 }
 
 
 tasks {
+    val patchJavaNativeLoader by creating {
+        doLast {
+            val namespaceLibrary = file("build/generated/java/io/gorules/zen_engine/NamespaceLibrary.java")
+            if (namespaceLibrary.exists() && !namespaceLibrary.readText().contains("NativeLibraryExtractor")) {
+                namespaceLibrary.writeText(
+                    namespaceLibrary.readText().replace(
+                        "System.loadLibrary(name);",
+                        "try {\n" +
+                            "                System.loadLibrary(name);\n" +
+                            "            } catch (UnsatisfiedLinkError e) {\n" +
+                            "                System.load(NativeLibraryExtractor.extract());\n" +
+                            "            }",
+                    ),
+                )
+            }
+        }
+    }
+
+    named(sourceSets["java"].compileJavaTaskName) {
+        dependsOn(patchJavaNativeLoader)
+    }
+
+    val testJava by creating(Test::class) {
+        group = "verification"
+        testClassesDirs = sourceSets["testsJava"].output.classesDirs
+        classpath = sourceSets["testsJava"].runtimeClasspath
+        useJUnitPlatform()
+        jvmArgs("--enable-native-access=ALL-UNNAMED")
+        workingDir = projectDir
+        testLogging {
+            events("passed", "failed", "skipped")
+            showExceptions = true
+            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        }
+    }
+
+    val testKotlin by creating(Test::class) {
+        group = "verification"
+        testClassesDirs = sourceSets["testsKotlin"].output.classesDirs
+        classpath = sourceSets["testsKotlin"].runtimeClasspath
+        useJUnitPlatform()
+        jvmArgs("--enable-native-access=ALL-UNNAMED")
+        workingDir = projectDir
+        testLogging {
+            events("passed", "failed", "skipped")
+            showExceptions = true
+            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        }
+    }
+
     val generateJavaJar by creating(Jar::class) {
         archiveBaseName.set("zen_engine")
         from(sourceSets["java"].output)
@@ -77,6 +171,7 @@ tasks {
         archiveBaseName.set("zen_engine")
         archiveClassifier.set("sources")
         from(sourceSets["java"].allJava)
+        dependsOn(patchJavaNativeLoader)
     }
 
     val generateKotlinJar by creating(Jar::class) {
@@ -152,8 +247,13 @@ publishing {
                 artifact(tasks["generateJavaSourcesJar"])
                 artifact(tasks["javadocJarJava"])
 
-                configurePom {
-                    dependency("net.java.dev.jna:jna:5.17.0")
+                configurePom(
+                    pomName = "GoRules ZEN Engine for Java",
+                    pomDescription = "Open-source Business Rules Engine (BRE) for Java, powered by a native Rust core. " +
+                        "Evaluates JSON Decision Models (decision tables, graphs and policies) in microseconds. " +
+                        "Part of the GoRules platform (https://gorules.io). " +
+                        "Documentation: https://docs.gorules.io/developers/sdks/java",
+                ) {
                 }
             }
         }
@@ -166,7 +266,13 @@ publishing {
                 artifact(tasks["generateKotlinSourcesJar"])
                 artifact(tasks["javadocJarKotlin"])
 
-                configurePom {
+                configurePom(
+                    pomName = "GoRules ZEN Engine for Kotlin",
+                    pomDescription = "Open-source Business Rules Engine (BRE) for Kotlin, powered by a native Rust core. " +
+                        "Evaluates JSON Decision Models (decision tables, graphs and policies) in microseconds. " +
+                        "Part of the GoRules platform (https://gorules.io). " +
+                        "Documentation: https://docs.gorules.io/developers/sdks/kotlin",
+                ) {
                     dependency("net.java.dev.jna:jna:5.17.0")
                 }
             }
@@ -183,7 +289,13 @@ publishing {
                 artifact(tasks["generateKotlinAndroidSourcesJar"])
                 artifact(tasks["javadocJarKotlinAndroid"])
 
-                configurePom {
+                configurePom(
+                    pomName = "GoRules ZEN Engine for Android",
+                    pomDescription = "Open-source Business Rules Engine (BRE) for Android (AAR), powered by a native Rust core. " +
+                        "Evaluates JSON Decision Models (decision tables, graphs and policies) on-device, offline-capable. " +
+                        "Part of the GoRules platform (https://gorules.io). " +
+                        "Documentation: https://docs.gorules.io/developers/sdks/android",
+                ) {
                     dependency("net.java.dev.jna:jna:5.14.0", "aar")
                     dependency("androidx.core:core-ktx:1.12.0")
                     dependency("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
@@ -229,13 +341,17 @@ fun loadCargoVersion(): String {
         ?: throw GradleException("Version not found in Cargo.toml")
 }
 
-fun MavenPublication.configurePom(dependencyConfig: PomDependencyBuilder.() -> Unit) {
+fun MavenPublication.configurePom(
+    pomName: String = "GoRules ZEN Engine",
+    pomDescription: String = "GoRules ZEN Engine is a cross-platform, Open-Source Business Rules Engine (BRE)",
+    dependencyConfig: PomDependencyBuilder.() -> Unit,
+) {
     val depBuilder = PomDependencyBuilder()
     depBuilder.dependencyConfig()
 
     pom {
-        name = "GoRules ZEN Engine"
-        description = "GoRules ZEN Engine is a cross-platform, Open-Source Business Rules Engine (BRE)"
+        name = pomName
+        description = pomDescription
         url = "https://gorules.io"
 
         licenses {

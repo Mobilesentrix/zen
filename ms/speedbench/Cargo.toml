@@ -1,0 +1,15 @@
+[package]
+name = "ms-speedbench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "MS profiling harness: evaluates corpus rules through the C ABI (zen_engine_evaluate) like the Go binding does"
+
+[dependencies]
+zen-ffi = { package = "ms-zen-ffi-rlib", path = "ffi-rlib" }
+serde_json = { workspace = true }
+libc = "0.2"
+pprof = { version = "0.14", features = ["flamegraph"] }
+zen-types = { path = "../../core/types" }
+ahash = { workspace = true }
+indexmap = "2"

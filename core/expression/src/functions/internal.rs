@@ -328,7 +328,6 @@ pub(crate) mod imp {
     use crate::vm::date::DynamicVariableExt;
     use crate::vm::VmDate;
     use crate::{Variable as V, Variable};
-    use ahash::HashMapExt;
     use anyhow::{anyhow, Context};
     use chrono_tz::Tz;
     #[cfg(not(feature = "regex-lite"))]
@@ -436,7 +435,7 @@ pub(crate) mod imp {
                     .iter()
                     .map(|c| c.map(|c| c.as_str()))
                     .filter_map(|c| c)
-                    .map(|s| V::String(Rc::from(s)))
+                    .map(|s| V::String((s).into()))
                     .collect()
             })
             .unwrap_or_default();
@@ -477,7 +476,7 @@ pub(crate) mod imp {
         let a = args.array(0)?;
         let arr = a.borrow();
 
-        let Some(first) = arr.first() else {
+        let Some(first) = arr.iter().find(|item| !matches!(item, V::Null)) else {
             return Ok(V::empty_object());
         };
 
@@ -491,7 +490,7 @@ pub(crate) mod imp {
             .sum();
 
         match first {
-            V::Array(_) | V::Null => {
+            V::Array(_) => {
                 let mut merged = Vec::with_capacity(capacity);
 
                 for item in arr.iter() {
@@ -508,8 +507,7 @@ pub(crate) mod imp {
                 Ok(V::from_array(merged))
             }
             V::Object(_) => {
-                let mut merged: ahash::HashMap<Rc<str>, V> =
-                    ahash::HashMap::with_capacity(capacity);
+                let mut merged = zen_types::variable::VariableMap::with_capacity(capacity);
                 for item in arr.iter() {
                     match item {
                         V::Object(obj) => {
@@ -555,8 +553,7 @@ pub(crate) mod imp {
             (V::Object(a), V::Object(b)) => {
                 let a = a.borrow();
                 let b = b.borrow();
-                let mut merged: ahash::HashMap<Rc<str>, V> =
-                    ahash::HashMap::with_capacity(a.len() + b.len());
+                let mut merged = zen_types::variable::VariableMap::with_capacity(a.len() + b.len());
 
                 for (key, value) in a.iter() {
                     merged.insert(key.clone(), value.clone());
@@ -664,7 +661,10 @@ pub(crate) mod imp {
 
     pub fn avg(args: Arguments) -> anyhow::Result<V> {
         let a = __internal_number_array(&args, 0)?;
-        let sum = a.iter().fold(Decimal::ZERO, |acc, x| acc + x);
+        let sum = a
+            .iter()
+            .try_fold(Decimal::ZERO, |acc, x| acc.checked_add(*x))
+            .context("Number overflow")?;
 
         Ok(V::Number(Decimal::from(
             sum.checked_div(Decimal::from(a.len()))
@@ -674,7 +674,10 @@ pub(crate) mod imp {
 
     pub fn sum(args: Arguments) -> anyhow::Result<V> {
         let a = __internal_number_array(&args, 0)?;
-        let sum = a.iter().fold(Decimal::ZERO, |acc, v| acc + v);
+        let sum = a
+            .iter()
+            .try_fold(Decimal::ZERO, |acc, v| acc.checked_add(*v))
+            .context("Number overflow")?;
 
         Ok(V::Number(Decimal::from(sum)))
     }
@@ -691,7 +694,10 @@ pub(crate) mod imp {
             let center_left = a.get(center - 1).context("Index out of bounds")?;
             let center_right = a.get(center).context("Index out of bounds")?;
 
-            let median = ((*center_left) + (*center_right)) / dec!(2);
+            let median = center_left
+                .checked_add(*center_right)
+                .context("Number overflow")?
+                / dec!(2);
             Ok(V::Number(median))
         }
     }
@@ -719,12 +725,16 @@ pub(crate) mod imp {
 
     pub fn to_bool(args: Arguments) -> anyhow::Result<V> {
         let a = args.var(0)?;
-        let val = match a {
+        let a = match a.dynamic::<VmDate>().and_then(VmDate::source) {
+            Some(text) => V::String(text.into()),
+            None => a.clone(),
+        };
+        let val = match &a {
             V::Null => false,
             V::Bool(v) => *v,
             V::Number(n) => !n.is_zero(),
             V::Array(_) | V::Object(_) | V::Dynamic(_) => true,
-            V::String(s) => match (*s).trim() {
+            V::String(s) => match s.as_str().trim() {
                 "true" => true,
                 "false" => false,
                 _ => s.is_empty(),
@@ -737,10 +747,11 @@ pub(crate) mod imp {
     pub fn to_string(args: Arguments) -> anyhow::Result<V> {
         let a = args.var(0)?;
         let val = match a {
-            V::Null => Rc::from("null"),
-            V::Bool(v) => Rc::from(v.to_string().as_str()),
-            V::Number(n) => Rc::from(n.to_string().as_str()),
+            V::Null => "null".into(),
+            V::Bool(v) => v.to_string().into(),
+            V::Number(n) => n.to_string().into(),
             V::String(s) => s.clone(),
+            V::Dynamic(d) if d.as_date().is_some() => d.to_string().into(),
             _ => return Err(anyhow!("Cannot convert type {} to string", a.type_name())),
         };
 
@@ -752,7 +763,7 @@ pub(crate) mod imp {
         let val = match a {
             V::Number(n) => *n,
             V::String(str) => {
-                let s = str.trim();
+                let s = str.as_str().trim();
                 Decimal::from_str_exact(s)
                     .or_else(|_| Decimal::from_scientific(s))
                     .context("Invalid number")?
@@ -772,7 +783,7 @@ pub(crate) mod imp {
         let is_ok = match a {
             V::Number(_) => true,
             V::String(str) => {
-                let s = str.trim();
+                let s = str.as_str().trim();
                 Decimal::from_str_exact(s)
                     .or_else(|_| Decimal::from_scientific(s))
                     .is_ok()
@@ -785,12 +796,9 @@ pub(crate) mod imp {
 
     pub fn len(args: Arguments) -> anyhow::Result<V> {
         let a = args.var(0)?;
-        let len = match a {
-            V::String(s) => s.len(),
-            V::Array(s) => {
-                let arr = s.borrow();
-                arr.len()
-            }
+        let len = match (a, a.as_str()) {
+            (V::Array(s), _) => s.borrow().len(),
+            (_, Some(text)) => text.len(),
             _ => {
                 return Err(anyhow!("Cannot determine len of type {}", a.type_name()));
             }
@@ -803,9 +811,8 @@ pub(crate) mod imp {
         let a = args.var(0)?;
         let b = args.var(1)?;
 
-        let val = match (a, b) {
-            (V::String(a), V::String(b)) => a.contains(b.as_ref()),
-            (V::Array(a), _) => {
+        let val = match (a, b, a.as_str().zip(b.as_str())) {
+            (V::Array(a), _, _) => {
                 let arr = a.borrow();
 
                 arr.iter().any(|a| match (a, b) {
@@ -813,9 +820,13 @@ pub(crate) mod imp {
                     (V::String(a), V::String(b)) => a == b,
                     (V::Bool(a), V::Bool(b)) => a == b,
                     (V::Null, V::Null) => true,
+                    (V::Dynamic(d), other) | (other, V::Dynamic(d)) => {
+                        d.as_date().is_some_and(|d| d.matches(other))
+                    }
                     _ => false,
                 })
             }
+            (_, _, Some((a, b))) => a.contains(b),
             _ => {
                 return Err(anyhow!(
                     "Cannot determine contains for type {} and {}",
@@ -832,13 +843,13 @@ pub(crate) mod imp {
         let a = args.var(0)?;
         let b = args.str(1)?;
 
-        let val = match a {
-            V::String(a) => {
-                let sim = strsim::normalized_damerau_levenshtein(a.as_ref(), b.as_ref());
+        let val = match (a, a.as_str()) {
+            (_, Some(a)) => {
+                let sim = strsim::normalized_damerau_levenshtein(a, b.as_ref());
                 // This is okay, as NDL will return [0, 1]
                 V::Number(Decimal::from_f64(sim).unwrap_or(dec!(0)))
             }
-            V::Array(_a) => {
+            (V::Array(_a), _) => {
                 let a = _a.borrow();
                 let mut sims = Vec::with_capacity(a.len());
                 for v in a.iter() {
@@ -875,7 +886,10 @@ pub(crate) mod imp {
             }
             V::Object(a) => {
                 let obj = a.borrow();
-                let keys = obj.iter().map(|(key, _)| V::String(key.clone())).collect();
+                let keys = obj
+                    .iter()
+                    .map(|(key, _)| V::String((key.as_str()).into()))
+                    .collect();
 
                 V::from_array(keys)
             }

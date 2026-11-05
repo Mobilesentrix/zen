@@ -1,0 +1,38 @@
+# Integration-test databases for ms-zen-database (local only).
+# Test credentials below are throwaway values for these disposable containers.
+name: ms-zen-test
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: ms-zen-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: test
+      MYSQL_DATABASE: ms_test
+    volumes:
+      - ./mysql-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-ptest"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    networks: [ms-zen-test]
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ms-zen-pg
+    environment:
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: ms_test
+    volumes:
+      - ./pg-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ms_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    networks: [ms-zen-test]
+
+networks:
+  ms-zen-test:
+    name: ms-zen-test

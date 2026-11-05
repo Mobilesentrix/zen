@@ -2,18 +2,22 @@ use crate::nodes::definition::{NodeDataType, TraceDataType};
 use crate::nodes::extensions::NodeHandlerExtensions;
 use crate::nodes::function::v2::function::Function;
 use crate::nodes::result::{NodeResponse, NodeResult};
+use crate::nodes::variable_json::{Guards, VariableNode};
 use crate::nodes::NodeError;
 use crate::ZEN_CONFIG;
-use ahash::AHasher;
+use ahash::{AHasher, HashSet};
 use jsonschema::ValidationError;
 use serde::Serialize;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::hash::Hasher;
+use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use thiserror::Error;
+use zen_expression::Isolate;
+use zen_types::symbol::Symbol;
 use zen_types::variable::{ToVariable, Variable};
 
 #[derive(Clone)]
@@ -24,10 +28,15 @@ where
 {
     pub id: Arc<str>,
     pub name: Arc<str>,
-    pub node: NodeData,
+    /// The node's content behind an `Rc`: a context is cloned for every item of a
+    /// loop-mode node, and an owned content would clone its shared `Arc`s each time.
+    pub node: Rc<NodeData>,
     pub input: Variable,
+    pub nodes: Option<Variable>,
     pub trace: Option<RefCell<TraceData>>,
-    pub extensions: NodeHandlerExtensions,
+    /// Shared per evaluation (`Rc`), so a node context clones one counter that
+    /// only this thread touches instead of every extension's `Arc`.
+    pub extensions: Rc<NodeHandlerExtensions>,
     pub iteration: u8,
     pub config: NodeContextConfig,
 }
@@ -37,17 +46,35 @@ where
     NodeData: NodeDataType,
     TraceData: TraceDataType,
 {
+    pub fn input_with_nodes(&self) -> Variable {
+        let Some(nodes) = &self.nodes else {
+            return self.input.shallow_clone();
+        };
+        let Variable::Object(object) = &self.input else {
+            return self.input.shallow_clone();
+        };
+
+        let mut map = object.borrow().clone();
+        map.insert(Variable::nodes_key(), nodes.clone());
+        Variable::from_object(map)
+    }
+
     pub fn from_base(base: NodeContextBase, data: NodeData) -> Self {
         Self {
             id: base.id,
             name: base.name,
             input: base.input,
+            nodes: base.nodes,
             extensions: base.extensions,
             iteration: base.iteration,
             trace: base.config.trace.then(|| Default::default()),
-            node: data,
+            node: Rc::new(data),
             config: base.config,
         }
+    }
+
+    pub fn isolate(&self) -> PooledIsolate {
+        make_isolate(&self.input, self.nodes.as_ref(), &self.extensions)
     }
 
     pub fn trace<Function>(&self, mutator: Function)
@@ -88,26 +115,142 @@ where
         self.extensions.function_runtime().await.node_context(self)
     }
 
-    pub fn validate(&self, schema: &Value, value: &Value) -> Result<(), NodeError> {
-        let validator_cache = self.extensions.validator_cache();
-        let hash = self.hash_node();
-
-        let validator = validator_cache
-            .get_or_insert(hash, schema)
+    pub fn validate(&self, schema: &Value, value: &Variable) -> Result<(), NodeError> {
+        let validator = self
+            .extensions
+            .validator_cache()
+            .get_or_insert(self.hash_node(), schema)
             .node_context(self)?;
+        if validator.is_valid(VariableNode::new(value, &Guards::default())) {
+            return Ok(());
+        }
 
-        validator
-            .validate(value)
-            .map_err(|err| ValidationErrorJson::from(err))
-            .node_context(self)?;
+        let current = value.deep_clone();
+        let mut removed: HashSet<String> = HashSet::default();
+        let mut first = true;
+        loop {
+            // After a round of removals, "no errors left" is checked with
+            // is_valid instead of collecting every error of the (usually now valid) value.
+            if !first && validator.is_valid(VariableNode::new(&current, &Guards::default())) {
+                return Ok(());
+            }
+            first = false;
+            let guards = Guards::default();
+            let paths: Vec<String> = validator
+                .iter_errors(VariableNode::new(&current, &guards))
+                .map(|error| error.instance_path().to_string())
+                .collect();
+            drop(guards);
+            if paths.is_empty() {
+                return Ok(());
+            }
+            let before = removed.len();
+            for path in &paths {
+                Self::remove_nulls_at(&current, path, &mut removed);
+            }
+            if removed.len() == before {
+                break;
+            }
+        }
 
-        Ok(())
+        let guards = Guards::default();
+        let mut errors: Vec<ValidationErrorJson> = validator
+            .iter_errors(VariableNode::new(value, &guards))
+            .map(ValidationErrorJson::from)
+            .collect();
+        let chosen = errors
+            .iter()
+            .position(|error| !removed.contains(&error.path))
+            .unwrap_or(0);
+        match chosen < errors.len() {
+            true => Err(errors.swap_remove(chosen)).node_context(self),
+            false => Ok(()),
+        }
+    }
+
+    fn remove_nulls_at(value: &Variable, pointer: &str, removed: &mut HashSet<String>) {
+        let segments: Vec<String> = pointer
+            .split('/')
+            .skip(1)
+            .map(|s| s.replace("~1", "/").replace("~0", "~"))
+            .collect();
+        let Some(target) = Self::node_at(value, &segments) else {
+            return;
+        };
+        match (&target, segments.split_last()) {
+            (Variable::Null, Some((key, parents))) => {
+                if let Some(Variable::Object(object)) = Self::node_at(value, parents) {
+                    if object
+                        .borrow_mut()
+                        .remove(&Symbol::from(key.as_str()))
+                        .is_some()
+                    {
+                        removed.insert(pointer.to_string());
+                    }
+                }
+            }
+            _ => Self::strip_nulls(&target, pointer, removed),
+        }
+    }
+
+    fn node_at(value: &Variable, segments: &[String]) -> Option<Variable> {
+        segments
+            .iter()
+            .try_fold(value.shallow_clone(), |current, segment| match &current {
+                Variable::Object(o) => o
+                    .borrow()
+                    .get(&Symbol::from(segment.as_str()))
+                    .map(Variable::shallow_clone),
+                Variable::Array(a) => segment
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| a.borrow().get(i).map(Variable::shallow_clone)),
+                _ => None,
+            })
+    }
+
+    fn strip_nulls(value: &Variable, pointer: &str, removed: &mut HashSet<String>) {
+        let children: Vec<(String, Variable)> = match value {
+            Variable::Object(object) => {
+                let entries: Vec<(Symbol, Variable)> = object
+                    .borrow()
+                    .iter()
+                    .map(|(key, field)| (key.clone(), field.shallow_clone()))
+                    .collect();
+                let mut children = Vec::with_capacity(entries.len());
+                for (key, field) in entries {
+                    let child = format!(
+                        "{pointer}/{}",
+                        key.as_str().replace('~', "~0").replace('/', "~1")
+                    );
+                    match field {
+                        Variable::Null => {
+                            object.borrow_mut().remove(&key);
+                            removed.insert(child);
+                        }
+                        field => children.push((child, field)),
+                    }
+                }
+                children
+            }
+            Variable::Array(array) => array
+                .borrow()
+                .iter()
+                .enumerate()
+                .map(|(index, item)| (format!("{pointer}/{index}"), item.shallow_clone()))
+                .collect(),
+            _ => return,
+        };
+        for (child, field) in children {
+            Self::strip_nulls(&field, &child, removed);
+        }
     }
 
     fn hash_node(&self) -> u64 {
         let mut hasher = AHasher::default();
         hasher.write(self.id.as_bytes());
         hasher.write(self.name.as_bytes());
+        hasher.write_u64(self.config.validation_salt);
         hasher.finish()
     }
 }
@@ -187,13 +330,92 @@ pub struct NodeContextBase {
     pub id: Arc<str>,
     pub name: Arc<str>,
     pub input: Variable,
+    pub nodes: Option<Variable>,
     pub iteration: u8,
-    pub extensions: NodeHandlerExtensions,
+    pub extensions: Rc<NodeHandlerExtensions>,
     pub config: NodeContextConfig,
     pub trace: Option<RefCell<Variable>>,
 }
 
+thread_local! {
+    /// Isolates kept for reuse on this thread. A node (and, in loop mode, every
+    /// item of it) would otherwise build a fresh isolate with fresh lexer/compiler/VM/arena buffers.
+    static ISOLATES: RefCell<Vec<Isolate>> = const { RefCell::new(Vec::new()) };
+}
+
+const POOLED_ISOLATES: usize = 8;
+
+/// An isolate borrowed from this thread's pool; it goes back (emptied) when dropped.
+pub struct PooledIsolate(Option<Isolate>);
+
+impl std::ops::Deref for PooledIsolate {
+    type Target = Isolate;
+
+    fn deref(&self) -> &Isolate {
+        self.0
+            .as_ref()
+            .expect("pooled isolate is present until dropped")
+    }
+}
+
+impl std::ops::DerefMut for PooledIsolate {
+    fn deref_mut(&mut self) -> &mut Isolate {
+        self.0
+            .as_mut()
+            .expect("pooled isolate is present until dropped")
+    }
+}
+
+impl Drop for PooledIsolate {
+    fn drop(&mut self) {
+        let Some(mut isolate) = self.0.take() else {
+            return;
+        };
+        isolate.release();
+        // try_with: during thread teardown the isolate is simply dropped.
+        let _ = ISOLATES.try_with(|pool| {
+            if let Ok(mut pool) = pool.try_borrow_mut() {
+                if pool.len() < POOLED_ISOLATES {
+                    pool.push(isolate);
+                }
+            }
+        });
+    }
+}
+
+pub(crate) fn make_isolate(
+    input: &Variable,
+    nodes: Option<&Variable>,
+    extensions: &NodeHandlerExtensions,
+) -> PooledIsolate {
+    let pooled = ISOLATES
+        .try_with(|pool| pool.try_borrow_mut().ok().and_then(|mut pool| pool.pop()))
+        .ok()
+        .flatten();
+    let mut isolate = pooled.unwrap_or_else(Isolate::new);
+    isolate.reset(input.clone(), extensions.compiled_cache.as_ref());
+    if let Some(nodes) = nodes {
+        isolate.set_local(Variable::nodes_key(), nodes.clone());
+    }
+
+    PooledIsolate(Some(isolate))
+}
+
 impl NodeContextBase {
+    pub fn isolate(&self) -> PooledIsolate {
+        make_isolate(&self.input, self.nodes.as_ref(), &self.extensions)
+    }
+
+    /// The input as the isolate sees it (`$nodes` included when present).
+    pub fn input_with_nodes(&self) -> Variable {
+        let (Some(nodes), Variable::Object(object)) = (&self.nodes, &self.input) else {
+            return self.input.shallow_clone();
+        };
+        let mut map = object.borrow().clone();
+        map.insert(Variable::nodes_key(), nodes.clone());
+        Variable::from_object(map)
+    }
+
     pub fn error<Error>(&self, error: Error) -> NodeResult
     where
         Error: Into<Box<dyn std::error::Error>>,
@@ -244,6 +466,7 @@ where
             id: value.id,
             name: value.name,
             input: value.input,
+            nodes: value.nodes,
             extensions: value.extensions,
             iteration: value.iteration,
             config: value.config,
@@ -293,7 +516,7 @@ impl<T> NodeContextExt<T, NodeContextBase> for Option<T> {
 
 #[derive(Debug, Serialize, Error)]
 #[serde(rename_all = "camelCase")]
-struct ValidationErrorJson {
+pub(crate) struct ValidationErrorJson {
     path: String,
     message: String,
 }
@@ -307,7 +530,7 @@ impl Display for ValidationErrorJson {
 impl<'a> From<ValidationError<'a>> for ValidationErrorJson {
     fn from(value: ValidationError<'a>) -> Self {
         ValidationErrorJson {
-            path: value.instance_path.to_string(),
+            path: value.instance_path().to_string(),
             message: format!("{}", value),
         }
     }
@@ -320,6 +543,7 @@ pub struct NodeContextConfig {
     pub max_depth: u8,
     pub function_timeout_millis: u64,
     pub http_auth: bool,
+    pub validation_salt: u64,
 }
 
 impl Default for NodeContextConfig {
@@ -330,6 +554,7 @@ impl Default for NodeContextConfig {
             function_timeout_millis: ZEN_CONFIG.function_timeout_millis.load(Ordering::Relaxed),
             http_auth: ZEN_CONFIG.http_auth.load(Ordering::Relaxed),
             max_depth: 5,
+            validation_salt: 0,
         }
     }
 }

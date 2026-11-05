@@ -1,101 +1,121 @@
 use crate::decision_graph::cleaner::ZEN_RESERVED_PROPERTIES;
 use crate::nodes::function::v2::error::ResultExt;
-use ahash::{HashMap, HashMapExt};
 use nohash_hasher::BuildNoHashHasher;
-use rquickjs::{Ctx, FromJs, IntoJs, Type, Value as QValue};
+use rquickjs::{Atom, Ctx, FromJs, IntoJs, Type, Value as QValue};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde_json::json;
 use std::collections::HashMap as StdHashMap;
-use std::rc::Rc;
-use zen_expression::variable::Variable;
+use zen_expression::variable::{Variable, VariableMap};
+use zen_types::rccell::RcCell;
+use zen_types::symbol::Symbol;
 
 #[derive(Debug)]
 pub(crate) struct JsValue(pub(crate) Variable);
 
 impl<'js> FromJs<'js> for JsValue {
     fn from_js(ctx: &Ctx<'js>, v: QValue<'js>) -> rquickjs::Result<Self> {
-        let computed_value = match v.type_of() {
-            Type::Uninitialized | Type::Undefined | Type::Null => Variable::Null,
-            Type::Bool => {
-                Variable::Bool(v.as_bool().or_throw_msg(ctx, "failed to convert to bool")?)
-            }
-            Type::Int => Variable::Number(Decimal::from(
-                v.as_int().or_throw_msg(ctx, "failed to convert to int")?,
-            )),
-            Type::BigInt => Variable::Number(Decimal::from(
-                v.into_big_int()
-                    .map(|b| b.clone().to_i64().ok())
-                    .flatten()
-                    .or_throw_msg(ctx, "failed to convert to number")?,
-            )),
-            Type::Float => Variable::Number(
-                Decimal::try_from(
-                    v.as_float()
-                        .or_throw_msg(ctx, "failed to convert to number")?,
-                )
-                .or_throw_msg(ctx, "failed to convert to number")?,
-            ),
-            Type::String => Variable::String(
-                v.into_string()
-                    .map(|s| s.to_string().ok())
-                    .flatten()
-                    .map(|s| Rc::from(s.as_str()))
-                    .or_throw_msg(ctx, "failed to convert to string")?,
-            ),
-            Type::Array => {
-                let arr = v
-                    .into_array()
-                    .or_throw_msg(ctx, "failed to convert to array")?;
-
-                let mut js_arr = Vec::with_capacity(arr.len());
-                for x in arr.into_iter() {
-                    js_arr.push(JsValue::from_js(ctx, x?)?.0)
-                }
-
-                Variable::from_array(js_arr)
-            }
-            Type::Object => {
-                let object = v
-                    .into_object()
-                    .or_throw_msg(ctx, "failed to convert to object")?;
-
-                let mut js_object = HashMap::with_capacity(object.len());
-                for p in object.props::<String, QValue>() {
-                    let (k, v) = p?;
-                    if ZEN_RESERVED_PROPERTIES.contains(&k.as_str()) {
-                        continue;
-                    }
-
-                    js_object.insert(Rc::from(k.as_str()), JsValue::from_js(ctx, v)?.0);
-                }
-
-                Variable::from_object(js_object)
-            }
-            Type::Exception => {
-                let exception = v
-                    .into_exception()
-                    .or_throw_msg(ctx, "failed to convert to exception")?;
-
-                let message = exception.message().unwrap_or_default();
-                let description = exception.to_string();
-
-                json!({ "message": message, "description": description }).into()
-            }
-            Type::Function => json!("[Function]").into(),
-            Type::Module => json!("[Module]").into(),
-            Type::Constructor => json!("[Constructor]").into(),
-            Type::Symbol => json!("[Symbol]").into(),
-            Type::Unknown => json!("[Unknown]").into(),
-            Type::Promise => {
-                let promise = v.into_promise().or_throw(ctx)?;
-                let val: JsValue = promise.finish()?;
-                val.0
-            }
-        };
-
-        Ok(JsValue(computed_value))
+        from_js_with(ctx, v, &mut KeyCache::default()).map(JsValue)
     }
+}
+
+/// The key of every object property, by its QuickJS atom, as the Symbol it
+/// becomes (`None` for a reserved key, which is skipped). The items of a result share their
+/// keys (every product has the same fields), so each distinct key is converted from JS once
+/// per result instead of once per item.
+type KeyCache<'js> = ahash::HashMap<Atom<'js>, Option<Symbol>>;
+
+fn from_js_with<'js>(
+    ctx: &Ctx<'js>,
+    v: QValue<'js>,
+    keys: &mut KeyCache<'js>,
+) -> rquickjs::Result<Variable> {
+    let computed_value = match v.type_of() {
+        Type::Uninitialized | Type::Undefined | Type::Null => Variable::Null,
+        Type::Bool => Variable::Bool(v.as_bool().or_throw_msg(ctx, "failed to convert to bool")?),
+        Type::Int => Variable::Number(Decimal::from(
+            v.as_int().or_throw_msg(ctx, "failed to convert to int")?,
+        )),
+        Type::BigInt => Variable::Number(Decimal::from(
+            v.into_big_int()
+                .and_then(|b| b.clone().to_i64().ok())
+                .or_throw_msg(ctx, "failed to convert to number")?,
+        )),
+        Type::Float => Variable::Number(
+            Decimal::try_from(
+                v.as_float()
+                    .or_throw_msg(ctx, "failed to convert to number")?,
+            )
+            .or_throw_msg(ctx, "failed to convert to number")?,
+        ),
+        Type::String => Variable::String(
+            v.into_string()
+                .and_then(|s| s.to_string().ok())
+                .map(Symbol::from)
+                .or_throw_msg(ctx, "failed to convert to string")?,
+        ),
+        Type::Array => {
+            let arr = v
+                .into_array()
+                .or_throw_msg(ctx, "failed to convert to array")?;
+
+            let mut js_arr = Vec::with_capacity(arr.len());
+            for x in arr.into_iter() {
+                js_arr.push(from_js_with(ctx, x?, keys)?)
+            }
+
+            Variable::from_array(js_arr)
+        }
+        Type::Object => {
+            let object = v
+                .into_object()
+                .or_throw_msg(ctx, "failed to convert to object")?;
+
+            let mut js_object = VariableMap::new();
+            for p in object.props::<Atom, QValue>() {
+                let (k, v) = p?;
+                let key = match keys.get(&k) {
+                    Some(key) => key.clone(),
+                    None => {
+                        let name = k.to_string()?;
+                        let key = (!ZEN_RESERVED_PROPERTIES.contains(&name.as_str()))
+                            .then(|| Symbol::from(name));
+                        keys.insert(k, key.clone());
+                        key
+                    }
+                };
+                let Some(key) = key else {
+                    continue;
+                };
+
+                js_object.insert(key, from_js_with(ctx, v, keys)?);
+            }
+
+            Variable::from_object(js_object)
+        }
+        Type::Exception => {
+            let exception = v
+                .into_exception()
+                .or_throw_msg(ctx, "failed to convert to exception")?;
+
+            let message = exception.message().unwrap_or_default();
+            let description = exception.to_string();
+
+            json!({ "message": message, "description": description }).into()
+        }
+        Type::Function => json!("[Function]").into(),
+        Type::Module => json!("[Module]").into(),
+        Type::Constructor => json!("[Constructor]").into(),
+        Type::Symbol => json!("[Symbol]").into(),
+        Type::Unknown => json!("[Unknown]").into(),
+        Type::Promise => {
+            let promise = v.into_promise().or_throw(ctx)?;
+            let val: JsValue = promise.finish()?;
+            val.0
+        }
+    };
+
+    Ok(computed_value)
 }
 
 impl<'js> IntoJs<'js> for JsValue {
@@ -167,7 +187,7 @@ impl<'r, 'js> JsConverter<'r, 'js> {
             Variable::Number(n) => n.to_f64().into_js(self.ctx),
             Variable::String(str) => str.into_js(self.ctx),
             Variable::Array(a) => {
-                let addr = Rc::as_ptr(&a) as *const () as usize;
+                let addr = RcCell::as_ptr(&a) as *const () as usize;
                 if let Some(cached) = self.cache.get(&addr) {
                     return Ok(cached.clone());
                 }
@@ -183,7 +203,7 @@ impl<'r, 'js> JsConverter<'r, 'js> {
                 Ok(val)
             }
             Variable::Object(o) => {
-                let addr = Rc::as_ptr(&o) as *const () as usize;
+                let addr = RcCell::as_ptr(&o) as *const () as usize;
                 if let Some(cached) = self.cache.get(&addr) {
                     return Ok(cached.clone());
                 }
@@ -191,7 +211,7 @@ impl<'r, 'js> JsConverter<'r, 'js> {
                 let qmap = rquickjs::Object::new(self.ctx.clone())?;
                 let obj = o.borrow();
                 for (key, value) in obj.iter() {
-                    qmap.set(key.as_ref(), self.convert_with_cache(value)?)?;
+                    qmap.set(key.as_str(), self.convert_with_cache(value)?)?;
                 }
 
                 let val = qmap.into_value();
@@ -336,5 +356,39 @@ pub(crate) mod rquickjs_conv {
             rquickjs::Error::new_from_js_message("rust type", "serde_json::Value", e.to_string())
         })?;
         JsonValue(json_value).into_js(&ctx)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use rquickjs::{Context, Runtime};
+
+    fn back(js: &str) -> String {
+        let rt = Runtime::new().unwrap();
+        let context = Context::full(&rt).unwrap();
+        context.with(|ctx| {
+            let v: QValue = ctx.eval(js).unwrap();
+            serde_json::to_string(&JsValue::from_js(&ctx, v).unwrap().0).unwrap()
+        })
+    }
+
+    /// The key cache must not change what comes back: keys repeated across items, `$nodes`
+    /// skipped wherever it appears, integer-like keys in JS enumeration order, nesting.
+    #[test]
+    fn results_with_repeated_keys_convert_as_before() {
+        assert_eq!(
+            back("[{a: 1, b: 'x', $nodes: 5}, {b: 'y', a: 2}, {a: {a: {$nodes: 1, z: null}}, '10': 1, '2': 2, 'é': true}]"),
+            r#"[{"a":1,"b":"x"},{"b":"y","a":2},{"2":2,"10":1,"a":{"a":{"z":null}},"é":true}]"#
+        );
+        assert_eq!(
+            back("({ items: Array.from({length: 3}, (_, i) => ({ id: i, name: 'n' + i, tags: [i, {id: i * 10}] })), $nodes: {x: 1} })"),
+            r#"{"items":[{"id":0,"name":"n0","tags":[0,{"id":0}]},{"id":1,"name":"n1","tags":[1,{"id":10}]},{"id":2,"name":"n2","tags":[2,{"id":20}]}]}"#
+        );
+        assert_eq!(
+            back("({ f: () => 1, u: undefined, n: 1.5 })"),
+            r#"{"f":"[Function]","u":null,"n":1.5}"#
+        );
     }
 }

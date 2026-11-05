@@ -116,9 +116,10 @@ pub struct DecisionTableContent {
     pub transform_attributes: TransformAttributes,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DecisionTableHitPolicy {
+    #[default]
     First,
     Collect,
 }
@@ -127,6 +128,7 @@ pub enum DecisionTableHitPolicy {
 #[serde(rename_all = "camelCase")]
 pub struct DecisionTableInputField {
     pub id: Arc<str>,
+    #[serde(default = "empty_arc_str")]
     pub name: Arc<str>,
     #[serde(default, deserialize_with = "empty_string_is_none")]
     pub field: Option<Arc<str>>,
@@ -136,8 +138,30 @@ pub struct DecisionTableInputField {
 #[serde(rename_all = "camelCase")]
 pub struct DecisionTableOutputField {
     pub id: Arc<str>,
+    #[serde(default = "empty_arc_str")]
     pub name: Arc<str>,
     pub field: Arc<str>,
+    #[serde(
+        rename = "type",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "empty_string_is_none"
+    )]
+    pub column_type: Option<Arc<str>>,
+}
+
+impl DecisionTableOutputField {
+    pub fn write_path(&self) -> (&str, bool) {
+        let field = self.field.trim();
+        match field.strip_suffix("[]") {
+            Some(base) => (base.trim_end(), true),
+            None => (field, false),
+        }
+    }
+}
+
+fn empty_arc_str() -> Arc<str> {
+    Arc::from("")
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

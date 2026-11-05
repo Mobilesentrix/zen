@@ -17,10 +17,32 @@ pub enum ZenError {
     IsolateError(Value),
     EvaluationError(Value),
 
-    LoaderKeyNotFound { key: String },
-    LoaderInternalError { key: String, message: String },
+    LoaderKeyNotFound {
+        key: String,
+    },
+    LoaderInternalError {
+        key: String,
+        message: String,
+    },
 
-    TemplateEngineError { template: String, message: String },
+    TemplateEngineError {
+        template: String,
+        message: String,
+    },
+
+    LoaderConfigError {
+        message: String,
+    },
+
+    /// Invalid database connection map (code 12).
+    DatabaseConfigError {
+        message: String,
+    },
+
+    /// A Rust panic caught at the C boundary (code 13); see guard.rs.
+    Panic {
+        message: String,
+    },
 }
 
 impl ZenError {
@@ -35,6 +57,13 @@ impl ZenError {
             ZenError::TemplateEngineError { template, message } => {
                 Some(json!({ "template": template, "message": message }).to_string())
             }
+            ZenError::DatabaseConfigError { message } => {
+                Some(json!({ "message": message }).to_string())
+            }
+            ZenError::LoaderConfigError { message } => {
+                Some(json!({ "message": message }).to_string())
+            }
+            ZenError::Panic { message } => Some(json!({ "message": message }).to_string()),
             _ => None,
         }
     }

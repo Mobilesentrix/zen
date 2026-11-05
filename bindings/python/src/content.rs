@@ -16,7 +16,9 @@ impl PyZenDecisionContent {
     pub fn new(data: &str) -> PyResult<Self> {
         let mut content: DecisionContent =
             serde_json::from_str(data).context("Failed to parse JSON")?;
-        content.compile();
+        if let DecisionContent::Graph(g) = &mut content {
+            Arc::make_mut(g).compile();
+        }
         Ok(Self(Arc::new(content)))
     }
 }
@@ -33,8 +35,8 @@ impl<'py> FromPyObject<'py> for PyZenDecisionContentJson {
         }
 
         if let Ok(b) = ob.downcast::<PyString>() {
-            let str = b.to_str()?;
-            let content = serde_json::from_str(str).context("Invalid JSON")?;
+            let str = b.to_cow()?;
+            let content = serde_json::from_str(&str).context("Invalid JSON")?;
 
             return Ok(Self(PyZenDecisionContent(Arc::new(content))));
         }

@@ -1,6 +1,12 @@
-# GoRules.ZenEngine
+# .NET Rules Engine
 
-Open-source Business Rules Engine for .NET. Execute JSON Decision Models (JDM) with native performance powered by Rust.
+**Business logic humans can read and machines can run.** One copy of your rules: the owner reads it, every system runs it.
+
+<img width="1280" alt="GoRules ZEN Engine" src="https://raw.githubusercontent.com/gorules/zen/master/.github/images/hero.png">
+
+ZEN Engine is a cross-platform, open-source [Business Rules Engine (BRE)](https://gorules.io) written in **Rust** with native **.NET** bindings, alongside Node.js, Python, Go, Java and Kotlin. Decisions evaluate in microseconds, run identically on every platform, and are stored as portable JSON Decision Models (JDM). Loading the JSON is up to you: file system, database or service call.
+
+Try it in the free [Online Editor](https://editor.gorules.io) with a built-in simulator, or embed the open-source React [JDM Editor](https://github.com/gorules/jdm-editor) in your own product. Learn more about the [C# rules engine](https://gorules.io/open-source/csharp-rules-engine) on the GoRules website.
 
 ## Installation
 
@@ -18,8 +24,20 @@ var engine = new ZenEngine(loader: null, customNode: null);
 var decision = engine.CreateDecision(new JsonBuffer(File.ReadAllBytes("my-decision.json")));
 var context = new JsonBuffer("""{"input": 42}""");
 var response = await decision.Evaluate(context, null);
-Console.WriteLine(response.result);
+Console.WriteLine(response.Result);
 
+```
+
+## Loader Configurations
+
+The `loader` argument accepts either a callback (`ZenLoader.Callback`) or a loader configuration
+of a known type. With a configuration, decisions are pre-loaded and pre-compiled at engine
+creation for faster evaluations:
+
+```csharp
+var fsEngine = new ZenEngine(loader: new ZenLoader.Filesystem("decisions"));
+var zipEngine = new ZenEngine(loader: new ZenLoader.Zip(File.ReadAllBytes("decisions.zip")));
+var cbEngine = new ZenEngine(loader: new ZenLoader.Callback(new FileLoader()));
 ```
 
 ## Features
@@ -35,12 +53,12 @@ Console.WriteLine(response.result);
 Enable tracing to inspect the execution of each node:
 
 ```csharp
-var options = new ZenEvaluateOptions(maxDepth: null, trace: true);
+var options = new ZenEvaluateOptions(MaxDepth: null, Trace: true);
 var decided = await decision.Evaluate(context, options);
 
-foreach (var (nodeId, trace) in decided.trace!)
+foreach (var (nodeId, trace) in decided.Trace!)
 {
-    Console.WriteLine($"{trace.name}: {trace.output}");
+    Console.WriteLine($"{trace.Name}: {trace.Output}");
 }
 ```
 
@@ -68,17 +86,17 @@ Extend the engine with custom logic:
 
 ```csharp
 
-using var myEngine = new ZenEngine(loader: new FileLoader(), customNode: new MyCustomNode());
+using var myEngine = new ZenEngine(loader: new ZenLoader.Callback(new FileLoader()), customNode: new MyCustomNode());
 var myResponse = await myEngine.Evaluate("custom.json", context, options);
-Console.WriteLine(myResponse.result); 
+Console.WriteLine(myResponse.Result);
 
 // Custom node handler
 class MyCustomNode : ZenCustomNodeCallback
 {
     public Task<ZenEngineHandlerResponse> Handle(ZenEngineHandlerRequest request) =>
         Task.FromResult(new ZenEngineHandlerResponse(
-            output: new JsonBuffer("""{"result": "custom"}"""),
-            traceData: null
+            Output: new JsonBuffer("""{"result": "custom"}"""),
+            TraceData: null
         ));
 }
 
@@ -91,8 +109,22 @@ class FileLoader : ZenDecisionLoaderCallback
 
 ```
 
+## Other platforms
+
+* **Node.js** - [GitHub](https://github.com/gorules/zen/tree/master/bindings/nodejs) | [Documentation](https://docs.gorules.io/developers/sdks/nodejs) | [npm](https://www.npmjs.com/package/@gorules/zen-engine)
+* **Python** - [GitHub](https://github.com/gorules/zen/tree/master/bindings/python) | [Documentation](https://docs.gorules.io/developers/sdks/python) | [PyPI](https://pypi.org/project/zen-engine/)
+* **Go** - [GitHub](https://github.com/gorules/zen-go) | [Documentation](https://docs.gorules.io/developers/sdks/go)
+* **Java / Kotlin** - [GitHub](https://github.com/gorules/zen/tree/master/bindings/uniffi) | [Documentation](https://docs.gorules.io/developers/sdks/java) | [Maven Central](https://mvnrepository.com/artifact/io.gorules/zen-engine)
+* **.NET** - [GitHub](https://github.com/gorules/zen/tree/master/bindings/uniffi) | [Documentation](https://docs.gorules.io/developers/sdks/csharp) | [NuGet](https://www.nuget.org/packages/GoRules.ZenEngine)
+* **Rust (Core)** - [GitHub](https://github.com/gorules/zen) | [Documentation](https://docs.gorules.io/developers/sdks/rust) | [crates.io](https://crates.io/crates/zen-engine)
+
 ## Links
 
+- [GoRules](https://gorules.io) - the platform around the open-source engine: managed cloud, self-hosted, or embedded. SOC 2 Type II.
+- [.NET SDK Documentation](https://docs.gorules.io/developers/sdks/csharp)
 - [GitHub Repository](https://github.com/gorules/zen)
-- [GoRules Documentation](https://docs.gorules.io/developers/sdks/csharp)
 - [JDM Editor](https://editor.gorules.io)
+
+## License
+
+[MIT License](https://opensource.org/licenses/MIT)

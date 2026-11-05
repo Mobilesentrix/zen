@@ -55,23 +55,29 @@
 //! `regex-deprecated` | Uses standard `regex` crate | Yes
 //! `regex-lite` | Opts for usage of lightweight `regex-lite` crate. Useful for reducing build size, especially in WASM. | No
 
+#![forbid(unsafe_code)]
+
 mod isolate;
 
-mod arena;
 pub mod compiler;
+mod dates;
 mod exports;
 pub mod expression;
 pub mod functions;
 pub mod intellisense;
 pub mod lexer;
 pub mod parser;
+pub mod scope;
+pub mod slot;
 pub mod validate;
 pub mod variable;
 pub mod vm;
 
+pub use dates::DateValue;
 pub use exports::{
     compile_expression, compile_unary_expression, evaluate_expression, evaluate_unary_expression,
 };
 pub use expression::{Expression, ExpressionKind, OpcodeCache};
 pub use isolate::{Isolate, IsolateError};
+pub use scope::Scope;
 pub use variable::Variable;

@@ -1,0 +1,169 @@
+# Changelog
+
+## [2.1.9](https://github.com/gorules/zen/compare/nodejs-v2.1.8...nodejs-v2.1.9) (2026-10-21)
+
+## [2.1.8](https://github.com/gorules/zen/compare/nodejs-v2.1.7...nodejs-v2.1.8) (2026-10-20)
+
+## [2.1.7](https://github.com/gorules/zen/compare/nodejs-v2.1.6...nodejs-v2.1.7) (2026-10-13)
+
+
+### Bug Fixes
+
+* **nodejs:** accept ZenDecisionContent returned from the loader ([#547](https://github.com/gorules/zen/issues/547)) ([96af373](https://github.com/gorules/zen/commit/96af373b626a779aacd43f7ed75e56f44ba469e4))
+
+## [2.1.6](https://github.com/gorules/zen/compare/nodejs-v2.1.5...nodejs-v2.1.6) (2026-10-13)
+
+
+### Bug Fixes
+
+* nodejs wasm root package ([#545](https://github.com/gorules/zen/issues/545)) ([73c8fda](https://github.com/gorules/zen/commit/73c8fda788dd20eb2f9f914b98e71e1d11510303))
+
+## [2.1.5](https://github.com/gorules/zen/compare/nodejs-v2.1.4...nodejs-v2.1.5) (2026-10-13)
+
+
+### Bug Fixes
+
+* threadless wasm ([#543](https://github.com/gorules/zen/issues/543)) ([c8692c4](https://github.com/gorules/zen/commit/c8692c401dd8adf01e2bad44f889349b22a351ec))
+
+## [2.1.4](https://github.com/gorules/zen/compare/nodejs-v2.1.3...nodejs-v2.1.4) (2026-10-09)
+
+
+### Bug Fixes
+
+* generate nodejs index.d.ts at build time instead of committing it ([#541](https://github.com/gorules/zen/issues/541)) ([dca7cac](https://github.com/gorules/zen/commit/dca7cac7e7029bc9d10a1c29eca7fe136172b27b))
+
+## [2.1.3](https://github.com/gorules/zen/compare/nodejs-v2.1.2...nodejs-v2.1.3) (2026-10-09)
+
+
+### Bug Fixes
+
+* rewrite import and decision node paths when documents move ([#539](https://github.com/gorules/zen/issues/539)) ([f887b7b](https://github.com/gorules/zen/commit/f887b7bad4e7513b00ec3dcafec009e0143383eb))
+
+## [2.1.2](https://github.com/gorules/zen/compare/nodejs-v2.1.1...nodejs-v2.1.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* decision table verification and diagnostic ([#537](https://github.com/gorules/zen/issues/537)) ([20d88e3](https://github.com/gorules/zen/commit/20d88e398d872adb8ab450a3ee802910f8a02cf3))
+
+## [2.1.1](https://github.com/gorules/zen/compare/nodejs-v2.1.0...nodejs-v2.1.1) (2026-09-29)
+
+## [2.1.0](https://github.com/gorules/zen/compare/nodejs-v2.0.2...nodejs-v2.1.0) (2026-09-29)
+
+
+### Features
+
+* implement slots instead of natural language ([#527](https://github.com/gorules/zen/issues/527)) ([ffdfd80](https://github.com/gorules/zen/commit/ffdfd807d1ad6e6be42854fbaaf429c2871fe90a))
+
+
+### Bug Fixes
+
+* tolerate null inputs and enforce required policy inputs ([#528](https://github.com/gorules/zen/issues/528)) ([4aba11e](https://github.com/gorules/zen/commit/4aba11edd3516e8a65a240ea4d43a8b3bd377ae5))
+
+
+### Miscellaneous
+
+* **nodejs:** align with zen-engine 2.1.0
+
+## [2.0.2](https://github.com/gorules/zen/compare/nodejs-v2.0.1...nodejs-v2.0.2) (2026-08-24)
+
+
+### Bug Fixes
+
+* correct readme examples and java native library loader ([#518](https://github.com/gorules/zen/issues/518)) ([8594f9a](https://github.com/gorules/zen/commit/8594f9a5fbb478b9de1b692851c787064cc5ae66))
+
+## [2.0.1](https://github.com/gorules/zen/compare/nodejs-v2.0.0...nodejs-v2.0.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* improve READMEs across bindings ([#516](https://github.com/gorules/zen/issues/516)) ([692ca2f](https://github.com/gorules/zen/commit/692ca2fe6b503a42da6b311dbefdf603a3ae5df4))
+
+## [2.0.0](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.15...nodejs-v2.0.0) (2026-08-20)
+
+
+### Bug Fixes
+
+* number out of range panics ([#506](https://github.com/gorules/zen/issues/506)) ([1372274](https://github.com/gorules/zen/commit/13722740a1c1af8b2c5b2bbf93536d46b95af812))
+
+## [1.0.0-beta.15](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.14...nodejs-v1.0.0-beta.15) (2026-08-18)
+
+## [1.0.0-beta.14](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.13...nodejs-v1.0.0-beta.14) (2026-08-07)
+
+
+### Performance
+
+* general performance improvements ([#500](https://github.com/gorules/zen/issues/500)) ([fe43b4c](https://github.com/gorules/zen/commit/fe43b4c1d71fb28c247ffb0ebd9e332d34f5f907))
+
+## [1.0.0-beta.13](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.12...nodejs-v1.0.0-beta.13) (2026-07-26)
+
+## [1.0.0-beta.12](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.11...nodejs-v1.0.0-beta.12) (2026-07-24)
+
+## [1.0.0-beta.11](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.10...nodejs-v1.0.0-beta.11) (2026-07-22)
+
+
+### Features
+
+* search capability ([#494](https://github.com/gorules/zen/issues/494)) ([c3b9de6](https://github.com/gorules/zen/commit/c3b9de695b871c390c8825d589566c9eff8b2ede))
+
+## [1.0.0-beta.10](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.9...nodejs-v1.0.0-beta.10) (2026-07-22)
+
+
+### Features
+
+* workspace lints and type fixes ([#492](https://github.com/gorules/zen/issues/492)) ([63b560c](https://github.com/gorules/zen/commit/63b560c526887537e5764d5a0e62c47ab0c7e6a0))
+
+## [1.0.0-beta.9](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.8...nodejs-v1.0.0-beta.9) (2026-07-20)
+
+
+### Bug Fixes
+
+* reduce wasm memory limits ([#489](https://github.com/gorules/zen/issues/489)) ([a9580c8](https://github.com/gorules/zen/commit/a9580c83d774c342f096cb75380fca666da61b35))
+
+## [1.0.0-beta.8](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.7...nodejs-v1.0.0-beta.8) (2026-07-17)
+
+
+### Bug Fixes
+
+* nodejs types and test timeout ([#485](https://github.com/gorules/zen/issues/485)) ([4990a48](https://github.com/gorules/zen/commit/4990a487cb809cb74dc11183519c13a4804d4efb))
+
+## [1.0.0-beta.7](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.6...nodejs-v1.0.0-beta.7) (2026-07-16)
+
+
+### Features
+
+* graph workspace and static analysis ([#483](https://github.com/gorules/zen/issues/483)) ([8d1910c](https://github.com/gorules/zen/commit/8d1910cc4ed31153e724173d10b5a612b3cbdfae))
+
+## [1.0.0-beta.6](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.5...nodejs-v1.0.0-beta.6) (2026-07-10)
+
+## [1.0.0-beta.5](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.4...nodejs-v1.0.0-beta.5) (2026-07-08)
+
+
+### Features
+
+* policy dictionary ([#479](https://github.com/gorules/zen/issues/479)) ([b4b59eb](https://github.com/gorules/zen/commit/b4b59eb7c50eebb7d04d172c8686dd05b56eb761))
+
+## [1.0.0-beta.4](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.3...nodejs-v1.0.0-beta.4) (2026-07-07)
+
+
+### Features
+
+* natural language ([#477](https://github.com/gorules/zen/issues/477)) ([6858c1b](https://github.com/gorules/zen/commit/6858c1bd045e9e00ade70b734f4a7ca065a36659))
+
+## [1.0.0-beta.3](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.2...nodejs-v1.0.0-beta.3) (2026-06-29)
+
+
+### Performance
+
+* binding variable conversion (python and nodejs) ([#474](https://github.com/gorules/zen/issues/474)) ([b6fac7c](https://github.com/gorules/zen/commit/b6fac7c7a64fa21bbcace0d7f51293d670980f62))
+
+## [1.0.0-beta.2](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.1...nodejs-v1.0.0-beta.2) (2026-06-26)
+
+## [1.0.0-beta.1](https://github.com/gorules/zen/compare/nodejs-v1.0.0-beta.0...nodejs-v1.0.0-beta.1) (2026-06-25)
+
+## [1.0.0-beta.0](https://github.com/gorules/zen/compare/nodejs-v0.54.0...nodejs-v1.0.0-beta.0) (2026-06-25)
+
+
+### Features
+
+* policy engine ([#450](https://github.com/gorules/zen/issues/450)) ([6c0ca51](https://github.com/gorules/zen/commit/6c0ca513546dd8cb3664e6926da66f146d9726d9))

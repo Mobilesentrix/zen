@@ -1,15 +1,23 @@
-use crate::variable_type::VariableType;
-use ahash::{HashMap, HashMapExt};
+use crate::variable_type::{MAX_TYPE_DEPTH, VariableType};
+use ahash::{HashMap, HashMapExt, HashSet};
 use rust_decimal::prelude::Zero;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::rc::Rc;
 
 impl VariableType {
+    pub fn unwrap_nullable(&self) -> (&VariableType, bool) {
+        match self {
+            VariableType::Nullable(inner) => (inner.as_ref(), true),
+            other => (other, false),
+        }
+    }
+
     pub fn iterator(&self) -> Option<Rc<VariableType>> {
         match self {
             VariableType::Array(item) => Some(item.clone()),
             VariableType::Interval => Some(Rc::new(VariableType::Number)),
+            VariableType::Nullable(inner) => inner.iterator(),
             _ => None,
         }
     }
@@ -17,6 +25,7 @@ impl VariableType {
     pub fn as_const_str(&self) -> Option<Rc<str>> {
         match self {
             VariableType::Const(s) => Some(s.clone()),
+            VariableType::Nullable(inner) => inner.as_const_str(),
             _ => None,
         }
     }
@@ -27,28 +36,64 @@ impl VariableType {
                 let obj = obj.borrow();
                 obj.get(key).cloned().unwrap_or(VariableType::Any)
             }
+            VariableType::Nullable(inner) => inner.get(key),
             _ => VariableType::Null,
         }
     }
 
     pub fn satisfies(&self, constraint: &Self) -> bool {
+        self.satisfies_at(constraint, 0, &mut HashSet::default())
+    }
+
+    fn satisfies_at(
+        &self,
+        constraint: &Self,
+        depth: usize,
+        visited: &mut HashSet<(*const (), *const (), usize)>,
+    ) -> bool {
+        if depth > MAX_TYPE_DEPTH {
+            return true;
+        }
         match (self, constraint) {
             (VariableType::Any, _) | (_, VariableType::Any) => true,
+            (VariableType::Nullable(a), VariableType::Nullable(b)) => {
+                a.satisfies_at(b, depth, visited)
+            }
+            (VariableType::Nullable(_), _) => false,
+            (other, VariableType::Nullable(inner)) => other.satisfies_at(inner, depth, visited),
+
             (VariableType::Null, VariableType::Null) => true,
             (VariableType::Bool, VariableType::Bool) => true,
             (VariableType::String, VariableType::String) => true,
             (VariableType::Number, VariableType::Number) => true,
             (VariableType::Date, VariableType::Date) => true,
             (VariableType::Number, VariableType::Date) => true,
+            (VariableType::Date, VariableType::String) => true,
             (_, VariableType::Date) if self.widen().is_string() => true,
             (VariableType::Interval, VariableType::Interval) => true,
-            (VariableType::Array(a1), VariableType::Array(a2)) => a1.satisfies(a2),
+            (VariableType::Array(a1), VariableType::Array(a2)) => {
+                a1.satisfies_at(a2, depth + 1, visited)
+            }
             (VariableType::Object(o1), VariableType::Object(o2)) => {
+                if Rc::ptr_eq(o1, o2)
+                    || !visited.insert((
+                        Rc::as_ptr(o1) as *const (),
+                        Rc::as_ptr(o2) as *const (),
+                        depth,
+                    ))
+                {
+                    return true;
+                }
                 let o1 = o1.borrow();
                 let o2 = o2.borrow();
 
-                o1.iter()
-                    .all(|(k, v)| o2.get(k).is_some_and(|tv| v.satisfies(tv)))
+                o2.iter().all(|(k, v)| match o1.get(k) {
+                    Some(tv) => tv.satisfies_at(v, depth + 1, visited),
+                    None => matches!(
+                        v,
+                        VariableType::Any | VariableType::Null | VariableType::Nullable(_)
+                    ),
+                })
             }
 
             (VariableType::Const(c1), VariableType::Const(c2)) => c1 == c2,
@@ -70,6 +115,7 @@ impl VariableType {
     pub fn is_array(&self) -> bool {
         match self {
             VariableType::Any | VariableType::Array(_) => true,
+            VariableType::Nullable(inner) => inner.is_array(),
             _ => false,
         }
     }
@@ -77,6 +123,7 @@ impl VariableType {
     pub fn is_iterable(&self) -> bool {
         match self {
             VariableType::Any | VariableType::Interval | VariableType::Array(_) => true,
+            VariableType::Nullable(inner) => inner.is_iterable(),
             _ => false,
         }
     }
@@ -84,6 +131,7 @@ impl VariableType {
     pub fn is_string(&self) -> bool {
         match self {
             VariableType::String => true,
+            VariableType::Nullable(inner) => inner.is_string(),
             _ => false,
         }
     }
@@ -91,6 +139,7 @@ impl VariableType {
     pub fn is_object(&self) -> bool {
         match self {
             VariableType::Any | VariableType::Object(_) => true,
+            VariableType::Nullable(inner) => inner.is_object(),
             _ => false,
         }
     }
@@ -102,17 +151,72 @@ impl VariableType {
         }
     }
 
+    pub fn is_nullable(&self) -> bool {
+        matches!(self, VariableType::Nullable(_) | VariableType::Null)
+    }
+
     pub fn widen(&self) -> Self {
         match self {
             VariableType::Const(_) | VariableType::Enum(_, _) => VariableType::String,
+            VariableType::Nullable(inner) => {
+                let widened = inner.widen();
+                VariableType::Nullable(Rc::new(widened))
+            }
             _ => self.clone(),
         }
     }
 
     pub fn merge(&self, other: &Self) -> Self {
-        match (self, other) {
+        self.merge_at(other, 0, &mut HashMap::default())
+    }
+
+    pub fn merge_all<'a>(types: impl IntoIterator<Item = &'a VariableType>) -> Option<Self> {
+        let mut types = types.into_iter();
+        let first = types.next()?;
+        let mut merged = first.shallow_clone();
+        let VariableType::Const(head) = first else {
+            return Some(types.fold(merged, |acc, t| acc.merge(t)));
+        };
+        let mut values: Vec<Rc<str>> = vec![head.clone()];
+        let mut seen: HashSet<Rc<str>> = HashSet::default();
+        seen.insert(head.clone());
+        for t in types.by_ref() {
+            let VariableType::Const(value) = t else {
+                merged = match values.len() {
+                    1 => VariableType::Const(values[0].clone()),
+                    _ => VariableType::Enum(None, values),
+                };
+                return Some(types.fold(merged.merge(t), |acc, t| acc.merge(t)));
+            };
+            if seen.insert(value.clone()) {
+                values.push(value.clone());
+            }
+        }
+        Some(match values.len() {
+            1 => VariableType::Const(values[0].clone()),
+            _ => VariableType::Enum(None, values),
+        })
+    }
+
+    fn merge_at(
+        &self,
+        other: &Self,
+        depth: usize,
+        memo: &mut HashMap<(*const (), *const (), usize), VariableType>,
+    ) -> Self {
+        if depth > MAX_TYPE_DEPTH {
+            return VariableType::Any;
+        }
+        let (left, left_nullable) = self.unwrap_nullable();
+        let (right, right_nullable) = other.unwrap_nullable();
+        let nullable = left_nullable || right_nullable;
+
+        let result = match (left, right) {
             (VariableType::Any, _) | (_, VariableType::Any) => VariableType::Any,
             (VariableType::Null, VariableType::Null) => VariableType::Null,
+            (VariableType::Null, other) | (other, VariableType::Null) => {
+                VariableType::Nullable(Rc::new(other.clone()))
+            }
             (VariableType::Bool, VariableType::Bool) => VariableType::Bool,
             (VariableType::String, VariableType::String) => VariableType::String,
             (VariableType::Number, VariableType::Number) => VariableType::Number,
@@ -122,41 +226,50 @@ impl VariableType {
                 if Rc::ptr_eq(a1, a2) {
                     VariableType::Array(a1.clone())
                 } else {
-                    VariableType::Array(Rc::new(a1.as_ref().merge(a2.as_ref())))
-                }
-            }
-
-            (VariableType::Object(o1), VariableType::Object(o2)) => {
-                let o1 = o1.borrow();
-                let o2 = o2.borrow();
-
-                let mut merged = HashMap::with_capacity(o1.len().max(o2.len()));
-                for (k, v) in o1.iter() {
-                    merged.insert(k.clone(), v.clone());
-                }
-
-                for (k, v) in o2.iter() {
-                    match merged.entry(k.clone()) {
-                        Entry::Occupied(mut entry) => {
-                            let current = entry.get();
-                            let merged_value = current.merge(v);
-                            entry.insert(merged_value);
+                    match (a1.as_ref(), a2.as_ref()) {
+                        (VariableType::Any, other) | (other, VariableType::Any) => {
+                            VariableType::Array(Rc::new(other.clone()))
                         }
-                        Entry::Vacant(entry) => {
-                            entry.insert(v.clone());
-                        }
+                        (l, r) => VariableType::Array(Rc::new(l.merge_at(r, depth + 1, memo))),
                     }
                 }
-
-                VariableType::Object(Rc::new(RefCell::new(merged)))
             }
-
+            (VariableType::Object(o1), VariableType::Object(o2)) if Rc::ptr_eq(o1, o2) => {
+                VariableType::Object(o1.clone())
+            }
+            (VariableType::Object(o1), VariableType::Object(o2)) => {
+                let key = (
+                    Rc::as_ptr(o1) as *const (),
+                    Rc::as_ptr(o2) as *const (),
+                    depth,
+                );
+                if let Some(cached) = memo.get(&key) {
+                    cached.shallow_clone()
+                } else {
+                    let o1 = o1.borrow();
+                    let o2 = o2.borrow();
+                    let mut merged = o1.clone();
+                    for (k, v) in o2.iter() {
+                        match merged.entry(k.clone()) {
+                            Entry::Occupied(mut entry) => {
+                                let value = entry.get().merge_at(v, depth + 1, memo);
+                                entry.insert(value);
+                            }
+                            Entry::Vacant(entry) => {
+                                entry.insert(v.clone());
+                            }
+                        }
+                    }
+                    let result = VariableType::Object(Rc::new(RefCell::new(merged)));
+                    memo.insert(key, result.shallow_clone());
+                    result
+                }
+            }
             (VariableType::Const(c), VariableType::Enum(_, values)) => {
                 let mut merged = values.clone();
                 if !merged.contains(c) {
                     merged.push(c.clone());
                 }
-
                 VariableType::Enum(None, merged)
             }
             (VariableType::Const(c1), VariableType::Const(c2)) => {
@@ -168,7 +281,6 @@ impl VariableType {
             }
             (VariableType::Const(_), VariableType::String)
             | (VariableType::String, VariableType::Const(_)) => VariableType::String,
-
             (VariableType::Enum(n1, a), VariableType::Enum(n2, b)) => {
                 let mut merged = a.clone();
                 for val in b {
@@ -184,7 +296,6 @@ impl VariableType {
 
                 VariableType::Enum(name, merged)
             }
-
             (VariableType::Enum(_, values), VariableType::Const(c)) => {
                 let mut merged = values.clone();
                 if !merged.contains(c) {
@@ -192,11 +303,28 @@ impl VariableType {
                 }
                 VariableType::Enum(None, merged)
             }
-
             (VariableType::Enum(_, _), VariableType::String)
             | (VariableType::String, VariableType::Enum(_, _)) => VariableType::String,
-
+            (
+                VariableType::Date,
+                VariableType::String | VariableType::Const(_) | VariableType::Enum(_, _),
+            )
+            | (
+                VariableType::String | VariableType::Const(_) | VariableType::Enum(_, _),
+                VariableType::Date,
+            ) => VariableType::String,
             (_, _) => VariableType::Any,
+        };
+
+        if nullable
+            && !matches!(
+                &result,
+                VariableType::Any | VariableType::Null | VariableType::Nullable(_)
+            )
+        {
+            VariableType::Nullable(Rc::new(result))
+        } else {
+            result
         }
     }
 
@@ -213,6 +341,7 @@ impl VariableType {
             VariableType::Object(obj) => VariableType::Object(obj.clone()),
             VariableType::Const(c) => VariableType::Const(c.clone()),
             VariableType::Enum(name, options) => VariableType::Enum(name.clone(), options.clone()),
+            VariableType::Nullable(inner) => VariableType::Nullable(Rc::new(inner.shallow_clone())),
         }
     }
 
@@ -275,6 +404,9 @@ impl VariableType {
                             .map(|(k, v)| (k.clone(), v.depth_clone(depth - 1)))
                             .collect(),
                     )))
+                }
+                VariableType::Nullable(inner) => {
+                    VariableType::Nullable(Rc::new(inner.depth_clone(depth)))
                 }
                 _ => self.shallow_clone(),
             },

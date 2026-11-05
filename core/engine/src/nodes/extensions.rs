@@ -1,5 +1,7 @@
 use crate::loader::{DynamicLoader, NoopLoader};
 use crate::nodes::custom::{DynamicCustomNode, NoopCustomNode};
+use crate::nodes::decision_table::cells::CompiledCells;
+use crate::nodes::decision_table::index::TableIndex;
 use crate::nodes::function::http_handler::DynamicHttpHandler;
 use crate::nodes::function::v2::function::{Function, FunctionConfig};
 use crate::nodes::function::v2::module::console::ConsoleListener;
@@ -20,6 +22,10 @@ pub struct NodeHandlerExtensions {
     pub(crate) custom_node: DynamicCustomNode,
     pub(crate) http_handler: DynamicHttpHandler,
     pub(crate) compiled_cache: Option<Arc<OpcodeCache>>,
+    pub(crate) stripped_functions: Option<Arc<ahash::HashMap<Arc<str>, Arc<str>>>>,
+    pub(crate) dt_indexes: Option<Arc<ahash::HashMap<Arc<str>, TableIndex>>>,
+    /// Decision-table cells resolved to bytecode, by node id.
+    pub(crate) dt_cells: Option<Arc<ahash::HashMap<Arc<str>, CompiledCells>>>,
 }
 
 impl Default for NodeHandlerExtensions {
@@ -31,6 +37,9 @@ impl Default for NodeHandlerExtensions {
             loader: Arc::new(NoopLoader::default()),
             custom_node: Arc::new(NoopCustomNode::default()),
             compiled_cache: None,
+            stripped_functions: None,
+            dt_indexes: None,
+            dt_cells: None,
             http_handler: None,
         }
     }

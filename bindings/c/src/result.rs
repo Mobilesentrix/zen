@@ -8,6 +8,7 @@ use zen_engine::EvaluationError;
 use zen_expression::IsolateError;
 
 use crate::error::{ZenError, ZenErrorDiscriminants};
+use crate::ms_error::evaluation_error_value;
 
 /// CResult can be seen as Either<Result, Error>. It cannot, and should not, be initialized
 /// manually. Instead, use error or ok functions for initialisation.
@@ -30,7 +31,7 @@ impl<T> ZenResult<T> {
                     };
                 };
 
-                cstring_data.into_raw()
+                crate::ms_alloc::malloc_cstring(cstring_data)
             }
             None => null_mut(),
         };
@@ -51,13 +52,33 @@ impl<T> ZenResult<T> {
     }
 }
 
+#[cfg(test)]
+impl<T> ZenResult<T> {
+    pub(crate) fn result_ptr(&self) -> *mut T {
+        self.result
+    }
+
+    pub(crate) fn error_code(&self) -> u8 {
+        self.error
+    }
+
+    pub(crate) fn details_ptr(&self) -> *const c_char {
+        self.details
+    }
+}
+
+impl<T> ZenResult<T> {
+    /// An evaluation error as `details` JSON; `traced` adds the partial trace (see ms_error.rs).
+    pub(crate) fn from_evaluation_error(error: &EvaluationError, traced: bool) -> Self {
+        ZenResult::error(ZenError::EvaluationError(evaluation_error_value(
+            error, traced,
+        )))
+    }
+}
+
 impl<T> From<&Box<EvaluationError>> for ZenResult<T> {
     fn from(evaluation_error: &Box<EvaluationError>) -> Self {
-        let Ok(value) = serde_json::to_value(evaluation_error) else {
-            return ZenResult::error(ZenError::JsonSerializationFailed);
-        };
-
-        ZenResult::error(ZenError::EvaluationError(value))
+        ZenResult::from_evaluation_error(evaluation_error, false)
     }
 }
 

@@ -1,6 +1,7 @@
 {
   "name": "@gorules/zen-engine",
-  "version": "0.54.0",
+  "description": "Open-source Business Rules Engine for Node.js, powered by Rust",
+  "version": "2.1.9",
   "main": "index.js",
   "browser": "browser.js",
   "types": "./index.d.ts",
@@ -10,6 +11,8 @@
     "index.js",
     "index.d.ts",
     "browser.js",
+    "ts-support.js",
+    "ts-support.d.ts",
     "README.md"
   ],
   "packageManager": "yarn@1.22.22",
@@ -23,14 +26,19 @@
       "aarch64-unknown-linux-gnu",
       "aarch64-unknown-linux-musl",
       "aarch64-apple-darwin",
-      "wasm32-wasi-preview1-threads"
+      "wasm32-wasip1"
     ],
+    "dtsHeaderFile": "./dts-header.d.ts",
     "npmClient": "yarn",
     "wasm": {
+      "initialMemory": 1024,
+      "maximumMemory": 16384,
       "browser": {
         "fs": false,
         "asyncInit": true
-      }
+      },
+      "asyncRuntime": true,
+      "optionalDependency": true
     }
   },
   "keywords": [
@@ -51,19 +59,22 @@
     "node-rs"
   ],
   "author": "GoRules <hi@gorules.io> (https://gorules.io)",
-  "homepage": "https://github.com/gorules/zen",
+  "homepage": "https://gorules.io",
   "engines": {
     "node": ">= 14"
   },
   "devDependencies": {
+    "@emnapi/core": "2.0.0-alpha.6",
+    "@emnapi/runtime": "2.0.0-alpha.6",
     "@jest/globals": "^30.2.0",
-    "@napi-rs/cli": "^3.4.1",
-    "@napi-rs/wasm-runtime": "^1.0.7",
+    "@napi-rs/async-runtime": "^0.2.0",
+    "@napi-rs/cli": "^3.10.8",
+    "@napi-rs/wasm-runtime": "^1.2.5",
     "@types/express": "^5.0.5",
     "@types/node": "^24.10.0",
     "babel-jest": "^30.2.0",
     "cross-env": "^10.1.0",
-    "emnapi": "^1.7.0",
+    "emnapi": "2.0.0-alpha.6",
     "express": "^5.1.0",
     "jest": "^30.2.0",
     "lerna": "6.6.2",
@@ -84,16 +95,18 @@
     "url": "git+https://github.com/gorules/zen.git"
   },
   "scripts": {
-    "build": "napi build --dts temp.d.ts --platform --release",
+    "build": "napi build --platform --release --dts index.d.ts",
     "build:debug": "napi build --platform --js index.js --dts index.d.ts",
     "watch": "cargo watch --ignore '{index.js,index.d.ts}' -- npm run build:debug",
     "test": "cross-env __ZEN_MOCK_UTC_TIME=2025-08-19T16:55:02.078Z jest",
+    "test:wasm": "cross-env NAPI_RS_FORCE_WASI=error NAPI_RS_WASI_FLAVOR=wasm32-wasip1 __ZEN_MOCK_UTC_TIME=2025-08-19T16:55:02.078Z jest -c jest.wasm.config.js",
     "artifacts": "napi artifacts -d ../../artifacts",
-    "createNpmDirs": "napi create-npm-dirs",
-    "prepublishOnly": "napi prepublish",
+    "createNpmDirs": "napi create-npm-dirs && node enrich-npm-dirs.mjs",
+    "prepublishOnly": "node prepublish.mjs --no-gh-release",
     "version": "napi version"
   },
   "resolutions": {
-    "form-data@^4.0.0": "4.0.4"
+    "form-data@^4.0.0": "4.0.4",
+    "@napi-rs/cli/**/@octokit/request": "10.0.14"
   }
 }

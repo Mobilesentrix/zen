@@ -266,7 +266,7 @@ mod imp {
         let format = args.ostr(1)?;
 
         let formatted = this.format(format);
-        Ok(V::String(Rc::from(formatted)))
+        Ok(V::String((formatted).into()))
     }
 
     pub fn start_of(args: Arguments) -> anyhow::Result<V> {
@@ -314,11 +314,11 @@ mod imp {
             signatures: vec![
                 FunctionSignature {
                     parameters: vec![VT::Date, VT::Date],
-                    return_type: VT::Date,
+                    return_type: VT::Bool,
                 },
                 FunctionSignature {
                     parameters: vec![VT::Date, VT::Date, DurationUnit::variable_type()],
-                    return_type: VT::Date,
+                    return_type: VT::Bool,
                 },
             ],
             implementation: Rc::new(move |args: Arguments| -> anyhow::Result<V> {
@@ -402,7 +402,7 @@ mod imp {
                     }
                     GetterOperation::IsLeapYear => V::Bool(dt.date_naive().leap_year()),
                     // String
-                    GetterOperation::OffsetName => V::String(Rc::from(dt.timezone().name())),
+                    GetterOperation::OffsetName => V::String((dt.timezone().name()).into()),
                 })
             }),
         })

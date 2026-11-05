@@ -1,7 +1,6 @@
 use crate::nodes::function::v2::module::http::auth::{AwsIamAuth, AzureIamAuth, GcpIamAuth};
 use ::http::Request as HttpRequest;
 use anyhow::Context;
-use async_trait::async_trait;
 use http::HeaderValue;
 use reqsign::{aws, azure, google};
 use reqwest::{Body, Request};
@@ -15,7 +14,6 @@ struct CachedProvider<Provider>(Arc<Provider>)
 where
     Provider: reqsign::ProvideCredential + Debug;
 
-#[async_trait]
 impl<Provider> reqsign::ProvideCredential for CachedProvider<Provider>
 where
     Provider: reqsign::ProvideCredential + Debug,

@@ -1,0 +1,27 @@
+{
+  "imports": [
+    "multi_shared.json"
+  ],
+  "blocks": [
+    {
+      "id": "s1",
+      "type": "expression",
+      "props": {
+        "data": {
+          "key": "customer.discount",
+          "value": "customer.tier"
+        }
+      }
+    },
+    {
+      "id": "age-read",
+      "type": "expression",
+      "props": {
+        "data": {
+          "key": "customer.ageCopy",
+          "value": "customer.age"
+        }
+      }
+    }
+  ]
+}

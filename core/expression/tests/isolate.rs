@@ -641,6 +641,34 @@ fn isolate_standard_test() {
                 },
             ]),
         },
+        TestEnv {
+            env: json!({
+                "name": "hello",
+                "zero": 0,
+            }),
+            cases: Vec::from([
+                TestCase {
+                    expr: "name[0]",
+                    result: json!("h"),
+                },
+                TestCase {
+                    expr: "name[zero]",
+                    result: json!("h"),
+                },
+                TestCase {
+                    expr: "name[4]",
+                    result: json!("o"),
+                },
+                TestCase {
+                    expr: "name[100]",
+                    result: json!(null),
+                },
+                TestCase {
+                    expr: "name[zero + 100]",
+                    result: json!(null),
+                },
+            ]),
+        },
     ]);
 
     let mut isolate = Isolate::new();
@@ -779,6 +807,62 @@ fn isolate_unary_tests() {
     }
 }
 
+#[test]
+fn isolate_does_not_mutate_environment() {
+    let environment: Variable = json!({ "a": 1, "nested": { "b": 2 } }).into();
+
+    let mut isolate = Isolate::new();
+    isolate.set_environment(environment.clone());
+
+    isolate.set_reference("a").unwrap();
+    isolate.set_local(Variable::nodes_key(), json!({ "some": "node" }).into());
+    isolate.run_standard("x = 1; y = x + a; y").unwrap();
+    isolate.insert_dollar("computed", Variable::Number(42.into()));
+
+    assert_eq!(
+        environment.to_value(),
+        json!({ "a": 1, "nested": { "b": 2 } }),
+        "the caller's environment must come back exactly as it went in"
+    );
+
+    assert_eq!(
+        isolate.run_standard("$nodes.some").unwrap().to_value(),
+        json!("node")
+    );
+    assert_eq!(
+        isolate.run_standard("$.computed").unwrap().to_value(),
+        json!(42)
+    );
+    assert_eq!(isolate.run_standard("a").unwrap().to_value(), json!(1));
+    let mut root_keys = isolate.run_standard("keys($root)").unwrap().to_value();
+    root_keys
+        .as_array_mut()
+        .unwrap()
+        .sort_by_key(|k| k.to_string());
+    assert_eq!(
+        root_keys,
+        json!(["$", "$nodes", "a", "nested"]),
+        "`$root` still sees the input and the bindings as one object"
+    );
+}
+
+#[test]
+fn assignments_do_not_leak_between_runs() {
+    let environment: Variable = json!({ "a": 1 }).into();
+
+    let mut isolate = Isolate::with_environment(environment.clone());
+    assert_eq!(
+        isolate.run_standard("b = a + 1; b").unwrap().to_value(),
+        json!(2)
+    );
+    assert_eq!(
+        isolate.run_standard("b").unwrap(),
+        Variable::Null,
+        "an assignment lives for one run only"
+    );
+    assert_eq!(environment.to_value(), json!({ "a": 1 }));
+}
+
 #[cfg(test)]
 mod test {
     use anyhow::Context;
@@ -881,4 +965,84 @@ mod test {
             );
         }
     }
+}
+
+#[test]
+fn arithmetic_overflow_errors_instead_of_panicking() {
+    let mut isolate = Isolate::new();
+    let max = "79228162514264337593543950335";
+
+    assert!(isolate.run_standard(&format!("{max} + 1")).is_err());
+    assert!(isolate.run_standard(&format!("-{max} - 1")).is_err());
+    assert!(isolate.run_standard(&format!("{max} * 2")).is_err());
+    assert!(isolate
+        .run_standard(&format!("sum([{max}, {max}])"))
+        .is_err());
+    assert!(isolate
+        .run_standard(&format!("avg([{max}, {max}])"))
+        .is_err());
+    assert!(isolate
+        .run_standard(&format!("median([{max}, {max}])"))
+        .is_err());
+}
+
+#[test]
+fn division_and_modulo_by_zero_return_null() {
+    let mut isolate = Isolate::new();
+
+    let division = isolate.run_standard("1 / 0").unwrap();
+    assert_eq!(division, Variable::Null);
+
+    let modulo = isolate.run_standard("1 % 0").unwrap();
+    assert_eq!(modulo, Variable::Null);
+}
+
+#[test]
+fn assigned_closure_with_inner_assignment_scopes_nest() {
+    let mut isolate = Isolate::new();
+    isolate.set_environment(json!({}).into());
+
+    let assigned = isolate
+        .run_standard("r = map([1,2,3] as x, (y = x * 2; y + 1)); r")
+        .unwrap();
+    assert_eq!(assigned, Variable::from(json!([3, 5, 7])));
+
+    let flat_mapped = isolate
+        .run_standard("r = flatMap([[1],[2,3]] as x, (y = x; y)); r")
+        .unwrap();
+    assert_eq!(flat_mapped, Variable::from(json!([1, 2, 3])));
+
+    let nested = isolate
+        .run_standard("r = map([1,2] as x, map([10,20] as z, (y = x * z; y))); r")
+        .unwrap();
+    assert_eq!(nested, Variable::from(json!([[10, 20], [20, 40]])));
+
+    let outer_after_inner = isolate
+        .run_standard("a = map([1] as x, (y = x; y)); b = a[0] + 1; b")
+        .unwrap();
+    assert_eq!(outer_after_inner, Variable::from(json!(2)));
+}
+
+#[test]
+fn date_add_out_of_range_is_invalid_instead_of_panicking() {
+    let mut isolate = Isolate::new();
+
+    let huge_seconds = isolate
+        .run_standard("d('2020-01-01').add(10000000000000000, 's').isValid()")
+        .unwrap();
+    assert_eq!(huge_seconds, Variable::Bool(false));
+
+    let huge_days = isolate
+        .run_standard("d('2020-01-01').sub(10000000000000, 'd').isValid()")
+        .unwrap();
+    assert_eq!(huge_days, Variable::Bool(false));
+}
+
+#[test]
+fn string_index_at_usize_max_returns_null() {
+    let mut isolate = Isolate::new();
+    isolate.set_environment(json!({ "s": "abc", "i": 18446744073709551615u64 }).into());
+
+    let result = isolate.run_standard("s[i]").unwrap();
+    assert_eq!(result, Variable::Null);
 }

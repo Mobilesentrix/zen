@@ -1,10 +1,9 @@
 use crate::decision_graph::graph::{DecisionGraph, DecisionGraphConfig, DecisionGraphResponse};
 use crate::engine::{EvaluationOptions, EvaluationSerializedOptions, EvaluationTraceKind};
 use crate::loader::{DynamicLoader, NoopLoader};
-use crate::model::DecisionContent;
+use crate::model::GraphContent;
 use crate::nodes::custom::{DynamicCustomNode, NoopCustomNode};
 use crate::nodes::function::http_handler::DynamicHttpHandler;
-use crate::nodes::validator_cache::ValidatorCache;
 use crate::nodes::NodeHandlerExtensions;
 use crate::{DecisionGraphValidationError, EvaluationError};
 use serde_json::Value;
@@ -15,33 +14,30 @@ use zen_expression::variable::Variable;
 /// Represents a JDM decision which can be evaluated
 #[derive(Debug, Clone)]
 pub struct Decision {
-    content: Arc<DecisionContent>,
+    content: Arc<GraphContent>,
     loader: DynamicLoader,
     adapter: DynamicCustomNode,
     http_handler: DynamicHttpHandler,
-    validator_cache: ValidatorCache,
 }
 
-impl From<DecisionContent> for Decision {
-    fn from(value: DecisionContent) -> Self {
+impl From<GraphContent> for Decision {
+    fn from(value: GraphContent) -> Self {
         Self {
             content: value.into(),
             loader: Arc::new(NoopLoader::default()),
             adapter: Arc::new(NoopCustomNode::default()),
             http_handler: None,
-            validator_cache: ValidatorCache::default(),
         }
     }
 }
 
-impl From<Arc<DecisionContent>> for Decision {
-    fn from(value: Arc<DecisionContent>) -> Self {
+impl From<Arc<GraphContent>> for Decision {
+    fn from(value: Arc<GraphContent>) -> Self {
         Self {
             content: value,
             loader: Arc::new(NoopLoader::default()),
             adapter: Arc::new(NoopCustomNode::default()),
             http_handler: None,
-            validator_cache: ValidatorCache::default(),
         }
     }
 }
@@ -86,7 +82,10 @@ impl Decision {
                 custom_node: self.adapter.clone(),
                 http_handler: self.http_handler.clone(),
                 compiled_cache: self.content.compiled_cache.clone(),
-                validator_cache: Arc::new(OnceCell::from(self.validator_cache.clone())),
+                dt_indexes: self.content.dt_indexes.clone(),
+                dt_cells: self.content.dt_cells.clone(),
+                stripped_functions: self.content.stripped_functions.clone(),
+                validator_cache: Arc::new(OnceCell::from(self.content.validator_cache.clone())),
                 ..Default::default()
             },
         })?;

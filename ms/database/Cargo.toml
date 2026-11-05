@@ -1,0 +1,39 @@
+[package]
+name = "ms-zen-database"
+description = "MobileSentrix database node for the GoRules zen engine (CustomNodeAdapter plug-in)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false }
+hashlink = "0.10"
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rust_decimal = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
+zen-engine = { path = "../../core/engine" }
+zen-expression = { path = "../../core/expression" }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring-webpki",
+    "mysql",
+    "postgres",
+    "chrono",
+    "rust_decimal",
+    "json",
+    "uuid",
+] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+
+[features]
+default = []
+arbitrary_precision = ["serde_json/arbitrary_precision", "zen-engine/arbitrary_precision", "zen-expression/arbitrary_precision"]

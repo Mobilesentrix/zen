@@ -1,14 +1,41 @@
-use crate::arena::UnsafeArena;
+use crate::compiler::Compiler;
+use crate::intellisense::completion::Completions;
+use crate::intellisense::dependency::DependencyResolutionWalker;
+use crate::intellisense::diagnostic::{
+    collect_parser_diagnostics, collect_type_diagnostics, compiler_error_to_diagnostic,
+    lexer_error_to_diagnostic, Diagnostic,
+};
+use crate::intellisense::fallible::Fallible;
+use crate::intellisense::inspection::{Hover, HoverWord, InspectionResult};
 use crate::intellisense::scope::IntelliSenseScope;
-use crate::intellisense::types::provider::TypesProvider;
+use crate::intellisense::type_provider::TypesProvider;
 use crate::lexer::Lexer;
-use crate::parser::{Node, Parser};
+use crate::parser::{Node, NodeMetadata, Parser};
+use crate::slot::{SlotRole, SlotState};
 use crate::variable::VariableType;
+use bumpalo::Bump;
+use nohash_hasher::BuildNoHashHasher;
 use serde::Serialize;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 
-mod scope;
-mod types;
+pub mod completion;
+pub mod dependency;
+pub mod diagnostic;
+mod discriminant;
+mod entity_flow;
+mod fallible;
+mod inspection;
+pub(crate) mod scope;
+pub(crate) mod type_provider;
+pub mod values;
+
+pub use dependency::{DependencyResult, ReadDependency, Reference};
+pub use discriminant::{ArmTest, NumberCover};
+pub use entity_flow::FlowSource;
+
+pub type AstMetadata = HashMap<usize, NodeMetadata, BuildNoHashHasher<usize>>;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,28 +46,453 @@ pub struct IntelliSenseToken {
     pub error: Option<String>,
 }
 
-pub struct IntelliSense<'arena> {
-    arena: UnsafeArena<'arena>,
-    lexer: Lexer<'arena>,
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpressionAnalysis {
+    pub return_type: VariableType,
+    pub reads: Vec<ReadDependency>,
+    pub references: Vec<Reference>,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
-impl<'arena> IntelliSense<'arena> {
+pub use crate::slot::LabelResolver;
+
+pub struct IntelliSense {
+    pub(crate) arena: Bump,
+    pub(crate) lexer: Lexer,
+    pub(crate) strict: bool,
+    pub(crate) labels: Option<LabelResolver>,
+}
+
+impl IntelliSense {
     pub fn new() -> Self {
         Self {
-            arena: UnsafeArena::new(),
+            arena: Bump::new(),
             lexer: Lexer::new(),
+            strict: false,
+            labels: None,
+        }
+    }
+
+    pub fn with_strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
+    }
+
+    pub fn set_labels(&mut self, labels: Option<LabelResolver>) {
+        self.labels = labels;
+    }
+
+    pub fn completions(
+        &mut self,
+        source: &str,
+        pos: u32,
+        data: &VariableType,
+    ) -> Vec<completion::Completion> {
+        let locals = self.closure_locals(source, pos, data);
+        let tokens = match self.type_check(source, data) {
+            Some(t) => t,
+            None => return Completions::build_scope(data, &locals),
+        };
+
+        Completions::build(source, pos, data, &tokens, &locals)
+    }
+
+    pub fn inspect(
+        &mut self,
+        source: &str,
+        pos: u32,
+        unary: bool,
+        role: SlotRole,
+        data: &VariableType,
+    ) -> Option<InspectionResult> {
+        self.arena.reset();
+        let word = self
+            .lexer
+            .tokenize_lenient(&self.arena, source)
+            .ok()
+            .and_then(|lenient| Hover::word_at(source, pos, &lenient));
+        match word {
+            Some((span, HoverWord::Call { member })) => {
+                let name = source.get(span.0 as usize..span.1 as usize)?;
+                let completion = if member {
+                    Completions::method_named(name)
+                } else {
+                    Completions::function_named(name)
+                }?;
+                let kind = self
+                    .inspect_typed(source, pos, data)
+                    .map_or(VariableType::Any, |call| call.kind);
+                Some(InspectionResult {
+                    detail: Some(completion.detail),
+                    info: Some(completion.info).filter(|info| !info.is_empty()),
+                    ..InspectionResult::typed(source, span, kind)
+                })
+            }
+            Some((span, HoverWord::Name)) => {
+                let probe = format!("{}.", source.get(..span.1 as usize)?);
+                let slot = self
+                    .slot(&probe, probe.len() as u32, unary, role, data, None)
+                    .slot;
+                match (slot.state, slot.operand) {
+                    (SlotState::Member | SlotState::Path, Some(kind)) => {
+                        Some(InspectionResult::typed(source, span, kind))
+                    }
+                    _ => self.inspect_typed(source, pos, data),
+                }
+            }
+            None => self.inspect_typed(source, pos, data),
+        }
+    }
+
+    fn inspect_typed(
+        &mut self,
+        source: &str,
+        pos: u32,
+        data: &VariableType,
+    ) -> Option<InspectionResult> {
+        let tokens = self.type_check(source, data)?;
+        Hover::smallest_token(source, pos, &tokens)
+    }
+
+    pub fn analyze(&mut self, source: &str, data: &VariableType) -> Rc<ExpressionAnalysis> {
+        Rc::new(self.analyze_standard_inner(source, data))
+    }
+
+    fn analyze_standard_inner(&mut self, source: &str, data: &VariableType) -> ExpressionAnalysis {
+        self.arena.reset();
+        let arena = &self.arena;
+        let mut diagnostics = Vec::new();
+
+        let tokens = match self.lexer.tokenize(arena, source) {
+            Ok(tokens) => tokens,
+            Err(err) => {
+                diagnostics.push(lexer_error_to_diagnostic(&err));
+                return ExpressionAnalysis {
+                    return_type: VariableType::Any,
+                    reads: Vec::new(),
+                    references: Vec::new(),
+                    diagnostics,
+                };
+            }
+        };
+
+        let Ok(parser) = Parser::try_new(&tokens, arena) else {
+            return ExpressionAnalysis {
+                return_type: VariableType::Any,
+                reads: Vec::new(),
+                references: Vec::new(),
+                diagnostics,
+            };
+        };
+
+        let parser = parser.standard().with_metadata();
+        let parser_result = parser.parse();
+        let ast = parser_result.root;
+
+        if !parser_result.is_complete || ast.has_error() {
+            if !parser_result.is_complete {
+                diagnostics.push(Diagnostic::incomplete());
+            }
+            collect_parser_diagnostics(ast, &mut diagnostics);
+            return ExpressionAnalysis {
+                return_type: VariableType::Any,
+                reads: Vec::new(),
+                references: Vec::new(),
+                diagnostics,
+            };
+        }
+
+        let metadata = parser_result.metadata.unwrap_or_default();
+
+        let scope = IntelliSenseScope {
+            pointer_data: data.shallow_clone(),
+            root_data: data.shallow_clone(),
+            current_data: data.shallow_clone(),
+            ..Default::default()
+        };
+
+        let type_data = TypesProvider::generate(ast, scope, self.strict);
+
+        let return_type = type_data
+            .get_type(ast)
+            .map(|t| t.kind.clone())
+            .unwrap_or(VariableType::Any);
+
+        collect_type_diagnostics(ast, &type_data, &metadata, &mut diagnostics);
+
+        let dep_result = DependencyResolutionWalker::walk(ast, &metadata);
+
+        let mut compiler = Compiler::new();
+        if let Err(err) = compiler.compile(ast) {
+            diagnostics.push(compiler_error_to_diagnostic(&err));
+        }
+
+        ExpressionAnalysis {
+            return_type,
+            reads: dep_result.reads,
+            references: dep_result.references,
+            diagnostics,
+        }
+    }
+
+    pub fn can_fail(&mut self, source: &str, data: &VariableType) -> bool {
+        self.arena.reset();
+        let arena = &self.arena;
+        let Ok(tokens) = self.lexer.tokenize(arena, source) else {
+            return true;
+        };
+        let Ok(parser) = Parser::try_new(&tokens, arena) else {
+            return true;
+        };
+        let parser_result = parser.standard().parse();
+        let ast = parser_result.root;
+        if !parser_result.is_complete || ast.has_error() {
+            return true;
+        }
+        let types = TypesProvider::generate(
+            ast,
+            IntelliSenseScope {
+                pointer_data: data.shallow_clone(),
+                root_data: data.shallow_clone(),
+                current_data: data.shallow_clone(),
+                ..Default::default()
+            },
+            self.strict,
+        );
+        !Fallible::new(&types).safe(ast)
+    }
+
+    pub fn with_ast<T>(
+        &mut self,
+        source: &str,
+        unary: bool,
+        f: impl for<'arena> FnOnce(&'arena Node<'arena>, &AstMetadata) -> T,
+    ) -> Option<T> {
+        self.arena.reset();
+        let arena = &self.arena;
+        let tokens = self.lexer.tokenize(arena, source).ok()?;
+        let parser = Parser::try_new(&tokens, arena).ok()?;
+        let parser_result = if unary {
+            parser.unary().with_metadata().parse()
+        } else {
+            parser.standard().with_metadata().parse()
+        };
+        let ast = parser_result.root;
+        if !parser_result.is_complete || ast.has_error() {
+            return None;
+        }
+        let metadata = parser_result.metadata.unwrap_or_default();
+        Some(f(ast, &metadata))
+    }
+
+    pub fn field_reads(
+        &mut self,
+        source: &str,
+        field_path: &[&str],
+    ) -> Option<Vec<ReadDependency>> {
+        self.arena.reset();
+        let arena = &self.arena;
+        let tokens = self.lexer.tokenize(arena, source).ok()?;
+        let parser = Parser::try_new(&tokens, arena)
+            .ok()?
+            .standard()
+            .with_metadata();
+        let parser_result = parser.parse();
+        let ast = parser_result.root;
+        if !parser_result.is_complete || ast.has_error() {
+            return None;
+        }
+        let metadata = parser_result.metadata.unwrap_or_default();
+        DependencyResolutionWalker::field_dependencies(ast, &metadata, field_path)
+    }
+
+    pub fn arm_test(&mut self, source: &str) -> ArmTest {
+        if source.trim().is_empty() {
+            return ArmTest::Default;
+        }
+        self.arena.reset();
+        let arena = &self.arena;
+        let result = (|| {
+            let tokens = self.lexer.tokenize(arena, source).ok()?;
+            let parser = Parser::try_new(&tokens, arena).ok()?;
+            let parser_result = parser.standard().with_metadata().parse();
+            let ast = parser_result.root;
+            if !parser_result.is_complete || ast.has_error() {
+                return None;
+            }
+            Some(ArmTest::from_node(ast))
+        })();
+        result.unwrap_or(ArmTest::Unrecognized)
+    }
+
+    pub fn cell_test(&mut self, source: &str) -> ArmTest {
+        if source.trim().is_empty() {
+            return ArmTest::Default;
+        }
+        self.arena.reset();
+        let arena = &self.arena;
+        let result = (|| {
+            let tokens = self.lexer.tokenize(arena, source).ok()?;
+            let parser = Parser::try_new(&tokens, arena).ok()?;
+            let parser_result = parser.unary().with_metadata().parse();
+            let ast = parser_result.root;
+            if !parser_result.is_complete || ast.has_error() {
+                return None;
+            }
+            let test = ArmTest::from_node(ast);
+            let on_reference = match &test {
+                ArmTest::Enum { path, .. }
+                | ArmTest::Bool { path, .. }
+                | ArmTest::Number { path, .. } => {
+                    matches!(path.as_slice(), [p] if p.as_ref() == "$")
+                }
+                _ => true,
+            };
+            on_reference.then_some(test)
+        })();
+        result.unwrap_or(ArmTest::Unrecognized)
+    }
+
+    pub fn flow_source(&mut self, source: &str) -> Option<FlowSource> {
+        if source.trim().is_empty() {
+            return None;
+        }
+        self.arena.reset();
+        let arena = &self.arena;
+        let tokens = self.lexer.tokenize(arena, source).ok()?;
+        let parser = Parser::try_new(&tokens, arena).ok()?;
+        let parser_result = parser.standard().parse();
+        let ast = parser_result.root;
+        if !parser_result.is_complete || ast.has_error() {
+            return None;
+        }
+        FlowSource::from_node(ast)
+    }
+
+    pub fn reads(&mut self, source: &str) -> Vec<ReadDependency> {
+        self.reads_inner(source, false).reads
+    }
+
+    pub fn reads_unary(&mut self, source: &str) -> Vec<ReadDependency> {
+        self.reads_inner(source, true).reads
+    }
+
+    pub fn dependencies(&mut self, source: &str) -> DependencyResult {
+        self.reads_inner(source, false)
+    }
+
+    fn reads_inner(&mut self, source: &str, unary: bool) -> DependencyResult {
+        self.arena.reset();
+        let arena = &self.arena;
+        let result = (|| {
+            let tokens = self.lexer.tokenize(arena, source).ok()?;
+            let parser = Parser::try_new(&tokens, arena).ok()?;
+            let parser_result = if unary {
+                parser.unary().with_metadata().parse()
+            } else {
+                parser.standard().with_metadata().parse()
+            };
+            let ast = parser_result.root;
+            if !parser_result.is_complete || ast.has_error() {
+                return None;
+            }
+            let metadata = parser_result.metadata.unwrap_or_default();
+            let dep = if unary {
+                DependencyResolutionWalker::walk_with_locals(ast, &metadata, &["$"])
+            } else {
+                DependencyResolutionWalker::walk(ast, &metadata)
+            };
+            Some(dep)
+        })();
+        result.unwrap_or_default()
+    }
+
+    pub fn analyze_unary(&mut self, source: &str, data: &VariableType) -> Rc<ExpressionAnalysis> {
+        Rc::new(self.analyze_unary_inner(source, data))
+    }
+
+    fn analyze_unary_inner(&mut self, source: &str, data: &VariableType) -> ExpressionAnalysis {
+        self.arena.reset();
+        let arena = &self.arena;
+        let mut diagnostics = Vec::new();
+
+        let tokens = match self.lexer.tokenize(arena, source) {
+            Ok(tokens) => tokens,
+            Err(err) => {
+                diagnostics.push(lexer_error_to_diagnostic(&err));
+                return ExpressionAnalysis {
+                    return_type: VariableType::Bool,
+                    reads: Vec::new(),
+                    references: Vec::new(),
+                    diagnostics,
+                };
+            }
+        };
+
+        let Ok(parser) = Parser::try_new(&tokens, arena) else {
+            return ExpressionAnalysis {
+                return_type: VariableType::Bool,
+                reads: Vec::new(),
+                references: Vec::new(),
+                diagnostics,
+            };
+        };
+
+        let parser = parser.unary().with_metadata();
+        let parser_result = parser.parse();
+        let ast = parser_result.root;
+
+        if !parser_result.is_complete || ast.has_error() {
+            if !parser_result.is_complete {
+                diagnostics.push(Diagnostic::incomplete());
+            }
+            collect_parser_diagnostics(ast, &mut diagnostics);
+            return ExpressionAnalysis {
+                return_type: VariableType::Bool,
+                reads: Vec::new(),
+                references: Vec::new(),
+                diagnostics,
+            };
+        }
+
+        let metadata = parser_result.metadata.unwrap_or_default();
+
+        let scope = IntelliSenseScope {
+            pointer_data: data.shallow_clone(),
+            root_data: data.shallow_clone(),
+            current_data: data.shallow_clone(),
+            ..Default::default()
+        };
+
+        let type_data = TypesProvider::generate(ast, scope, self.strict);
+        collect_type_diagnostics(ast, &type_data, &metadata, &mut diagnostics);
+
+        let dep_result = DependencyResolutionWalker::walk_with_locals(ast, &metadata, &["$"]);
+
+        let mut compiler = Compiler::new();
+        if let Err(err) = compiler.compile(ast) {
+            diagnostics.push(compiler_error_to_diagnostic(&err));
+        }
+
+        ExpressionAnalysis {
+            return_type: VariableType::Bool,
+            reads: dep_result.reads,
+            references: dep_result.references,
+            diagnostics,
         }
     }
 
     pub fn type_check(
         &mut self,
-        source: &'arena str,
+        source: &str,
         data: &VariableType,
     ) -> Option<Vec<IntelliSenseToken>> {
-        let arena = self.arena.get();
+        self.arena.reset();
+        let arena = &self.arena;
 
-        let tokens = self.lexer.tokenize(source).ok()?;
-        let parser = Parser::try_new(tokens, &arena).map(|p| p.standard()).ok()?;
+        let tokens = self.lexer.tokenize(arena, source).ok()?;
+        let parser = Parser::try_new(&tokens, arena).map(|p| p.standard()).ok()?;
 
         let parser_result = parser.with_metadata().parse();
         let ast = parser_result.root;
@@ -54,6 +506,7 @@ impl<'arena> IntelliSense<'arena> {
                 current_data: data.shallow_clone(),
                 ..Default::default()
             },
+            self.strict,
         );
 
         let results = RefCell::new(Vec::new());
@@ -74,20 +527,19 @@ impl<'arena> IntelliSense<'arena> {
                     .unwrap_or_else(|| VariableType::Any),
             });
         });
-
-        self.arena.with_mut(|a| a.reset());
         Some(results.into_inner())
     }
 
     pub fn type_check_unary(
         &mut self,
-        source: &'arena str,
+        source: &str,
         data: &VariableType,
     ) -> Option<Vec<IntelliSenseToken>> {
-        let arena = self.arena.get();
+        self.arena.reset();
+        let arena = &self.arena;
 
-        let tokens = self.lexer.tokenize(source).ok()?;
-        let parser = Parser::try_new(tokens, &arena).map(|p| p.unary()).ok()?;
+        let tokens = self.lexer.tokenize(arena, source).ok()?;
+        let parser = Parser::try_new(&tokens, arena).map(|p| p.unary()).ok()?;
 
         let parser_result = parser.with_metadata().parse();
         let ast = parser_result.root;
@@ -101,6 +553,7 @@ impl<'arena> IntelliSense<'arena> {
                 current_data: data.shallow_clone(),
                 ..Default::default()
             },
+            self.strict,
         );
 
         let results = RefCell::new(Vec::new());
@@ -118,37 +571,6 @@ impl<'arena> IntelliSense<'arena> {
                     .unwrap_or_else(|| VariableType::Any),
             });
         });
-
-        self.arena.with_mut(|a| a.reset());
         Some(results.into_inner())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::intellisense::IntelliSense;
-    use crate::variable::VariableType;
-    use serde_json::json;
-
-    #[test]
-    fn sample_test() {
-        let mut is = IntelliSense::new();
-
-        let data = json!({ "customer": { "firstName": "John", "lastName": "Doe", "array": [{"a": 5}, {"a": 6}] } });
-        let data_type: VariableType = data.into();
-
-        let typ = is.type_check("customer.array[0]", &data_type);
-        println!("{:?}", typ);
-    }
-
-    #[test]
-    fn sample_test_unary() {
-        let mut is = IntelliSense::new();
-
-        let data = json!({ "customer": { "firstName": "John", "lastName": "Doe" }, "$": 10});
-        let data_type: VariableType = data.into();
-
-        let typ = is.type_check_unary("> 10", &data_type);
-        println!("{typ:?}");
     }
 }

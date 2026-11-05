@@ -1,5 +1,4 @@
 use std::iter::Peekable;
-use std::rc::Rc;
 use std::slice::Iter;
 
 use crate::error::TemplateRenderError;
@@ -16,7 +15,7 @@ pub(crate) enum InterpreterResult<'a> {
 #[derive(Debug)]
 pub(crate) struct Interpreter<'source, 'nodes> {
     cursor: Peekable<Iter<'nodes, Node<'source>>>,
-    isolate: Isolate<'source>,
+    isolate: Isolate,
     results: Vec<InterpreterResult<'source>>,
 }
 
@@ -56,7 +55,7 @@ impl<'source, 'nodes> Interpreter<'source, 'nodes> {
                 let item = self.results.remove(0);
                 match item {
                     InterpreterResult::Variable(val) => Ok(val),
-                    InterpreterResult::String(str) => Ok(Variable::String(Rc::from(str))),
+                    InterpreterResult::String(str) => Ok(Variable::String((str).into())),
                 }
             }
             _ => {
@@ -69,7 +68,7 @@ impl<'source, 'nodes> Interpreter<'source, 'nodes> {
                     })
                     .collect::<String>();
 
-                Ok(Variable::String(Rc::from(string_data.as_str())))
+                Ok(Variable::String((string_data.as_str()).into()))
             }
         }
     }

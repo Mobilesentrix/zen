@@ -87,6 +87,7 @@ impl TryFrom<DecisionGraphResponse> for ZenEngineResponse {
             result: JsonBuffer::try_from(value.result)?,
             trace: value
                 .trace
+                .and_then(|t| t.into_graph())
                 .map(|opt| {
                     opt.into_iter()
                         .map(|(key, value)| Ok((key.to_string(), ZenEngineTrace::try_from(value)?)))
@@ -95,6 +96,19 @@ impl TryFrom<DecisionGraphResponse> for ZenEngineResponse {
                 .transpose()?,
         })
     }
+}
+
+#[derive(uniffi::Record)]
+pub struct ZenBatchRequest {
+    pub key: String,
+    pub context: JsonBuffer,
+}
+
+#[derive(uniffi::Record)]
+pub struct ZenBatchResult {
+    pub success: bool,
+    pub data: Option<ZenEngineResponse>,
+    pub error: Option<String>,
 }
 
 #[derive(uniffi::Record)]

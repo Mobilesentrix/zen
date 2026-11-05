@@ -1,10 +1,12 @@
 use crate::custom_node::{DynamicCustomNode, ZenCustomNodeResult};
 use crate::engine::{ZenEngine, ZenEngineStruct};
+use crate::guard::guarded_ptr;
 use crate::loader::{DynamicDecisionLoader, ZenDecisionLoaderResult};
+use anyhow::anyhow;
 use std::ffi::{c_char, CString};
 use std::future::Future;
 use std::pin::Pin;
-use zen_engine::loader::{DecisionLoader, LoaderResponse};
+use zen_engine::loader::{DecisionLoader, LoaderError, LoaderResponse};
 use zen_engine::nodes::custom::{CustomNodeAdapter, CustomNodeRequest};
 use zen_engine::nodes::{NodeError, NodeResult};
 
@@ -30,7 +32,12 @@ impl DecisionLoader for NativeDecisionLoader {
         key: &'a str,
     ) -> Pin<Box<dyn Future<Output = LoaderResponse> + Send + 'a>> {
         Box::pin(async move {
-            let c_key = CString::new(key).unwrap();
+            let Ok(c_key) = CString::new(key) else {
+                return Err(LoaderError::Internal {
+                    key: key.to_string(),
+                    source: anyhow!("decision key contains a NUL byte"),
+                });
+            };
             let c_content_ptr = (&self.callback)(c_key.as_ptr());
 
             c_content_ptr.into_loader_response(key)
@@ -78,13 +85,33 @@ pub extern "C" fn zen_engine_new_native(
     loader_callback: ZenDecisionLoaderNativeCallback,
     custom_node_callback: ZenCustomNodeNativeCallback,
 ) -> *mut ZenEngineStruct {
-    let loader = NativeDecisionLoader::new(loader_callback);
-    let custom_node = NativeCustomNode::new(custom_node_callback);
+    guarded_ptr(|| {
+        let loader = NativeDecisionLoader::new(loader_callback);
+        let custom_node = NativeCustomNode::new(custom_node_callback);
 
-    let engine = ZenEngine::new(
-        DynamicDecisionLoader::Native(loader),
-        DynamicCustomNode::Native(custom_node),
-    );
+        let engine = ZenEngine::new(
+            DynamicDecisionLoader::Native(loader),
+            DynamicCustomNode::Native(custom_node),
+        );
 
-    Box::into_raw(Box::new(engine)) as *mut ZenEngineStruct
+        Box::into_raw(Box::new(engine)) as *mut ZenEngineStruct
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mt::tokio_runtime;
+
+    extern "C" fn never_called(_key: *const c_char) -> ZenDecisionLoaderResult {
+        panic!("the loader callback must not run for an invalid key");
+    }
+
+    #[test]
+    fn key_with_nul_byte_is_a_loader_error_not_a_panic() {
+        let loader = NativeDecisionLoader::new(never_called);
+        let result = tokio_runtime().block_on(loader.load("rules/a\0b.json"));
+        let err = result.expect_err("loader error");
+        assert!(err.to_string().contains("NUL"), "{err}");
+    }
 }

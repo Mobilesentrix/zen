@@ -2,7 +2,11 @@
 resolver = "2"
 members = [
     "core/*",
-    "bindings/*"
+    "bindings/*",
+    "benchmark/rust",
+    "ms/database",
+    "ms/speedbench",
+    "ms/speedbench/ffi-rlib"
 ]
 
 [workspace.dependencies]

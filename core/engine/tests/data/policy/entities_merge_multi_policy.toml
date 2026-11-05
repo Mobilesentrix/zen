@@ -1,0 +1,107 @@
+# Entity merging across policies: customer defined in both merge_policy_a and merge_policy_b
+
+policies = ["merge_policy_a.json", "merge_policy_b.json", "merge_policy_c.json"]
+
+[[test]]
+name = "cross-policy merge: name from A (first wins, local)"
+policy = "merge_policy_a.json"
+entity = "customer"
+field = "name"
+field_kind = { kind = "scalar" }
+property_kind = "input"
+source_is_local = true
+
+[[test]]
+name = "cross-policy merge: age from policy A (local)"
+policy = "merge_policy_a.json"
+entity = "customer"
+field = "age"
+field_kind = { kind = "scalar" }
+property_kind = "input"
+source_is_local = true
+
+[[test]]
+name = "cross-policy merge: country from policy B (imported)"
+policy = "merge_policy_a.json"
+entity = "customer"
+field = "country"
+field_kind = { kind = "scalar" }
+property_kind = "input"
+source = "merge_policy_b.json"
+
+[[test]]
+name = "cross-policy merge: computed greeting from policy A (local)"
+policy = "merge_policy_a.json"
+entity = "customer"
+field = "greeting"
+property_kind = "computed"
+source_is_local = true
+
+[[test]]
+name = "cross-policy merge: computed label from policy B (imported)"
+policy = "merge_policy_a.json"
+entity = "customer"
+field = "label"
+property_kind = "computed"
+source = "merge_policy_b.json"
+
+# ── No duplicate fields after merge ──────────────────────────────────────────
+
+[[test]]
+name = "entities(A): no duplicate fields after cross-policy merge"
+policy = "merge_policy_a.json"
+entity = "customer"
+no_duplicate_fields = true
+
+# ── Visibility from policy B's perspective ───────────────────────────────────
+# Imports are directional: B must not see fields declared by its importer A.
+
+[[test]]
+name = "entities(B): has own fields"
+policy = "merge_policy_b.json"
+entity = "customer"
+field = "name"
+property_kind = "input"
+
+[[test]]
+name = "entities(B): has country"
+policy = "merge_policy_b.json"
+entity = "customer"
+field = "country"
+property_kind = "input"
+
+[[test]]
+name = "entities(B): has own computed label"
+policy = "merge_policy_b.json"
+entity = "customer"
+field = "label"
+property_kind = "computed"
+
+[[test]]
+name = "entities(B): importer fields remain hidden"
+policy = "merge_policy_b.json"
+entity = "customer"
+absent_fields = ["age", "greeting", "segment", "tag"]
+
+# ── Siblings importing the same policy stay isolated ─────────────────────────
+
+[[test]]
+name = "entities(C): sees fields of the shared import"
+policy = "merge_policy_c.json"
+entity = "customer"
+field = "country"
+field_kind = { kind = "scalar" }
+property_kind = "input"
+source = "merge_policy_b.json"
+
+[[test]]
+name = "entities(C): sibling importer fields remain hidden"
+policy = "merge_policy_c.json"
+entity = "customer"
+absent_fields = ["age"]
+
+[[test]]
+name = "entities(A): sibling importer fields remain hidden"
+policy = "merge_policy_a.json"
+entity = "customer"
+absent_fields = ["segment", "tag"]
