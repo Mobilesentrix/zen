@@ -35,6 +35,12 @@ Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons
   order with a state carried between them, early `stop`, `maxIterations`; a failing item is named by
   its index (ADR 0006).
 - Benchmarks and a profiling harness (`ms/speedbench`), not part of the shipped library.
+- Expression list functions, so rules no longer need a Function node to sort, rank, group or keep a
+  running total: `sort(array, 'desc'?)`, `sortBy(array, key, 'desc'?)` (stable, nulls last, an array
+  key orders by several fields), `minBy` / `maxBy` (the element; first on ties), `unique`,
+  `uniqueBy`, `countDistinct`, `groupBy` (object of arrays), `keyBy` (first element per key wins),
+  `join(array, separator)`, `first`, `last`, `reduce(array, step, initial)` and
+  `scan(array, step, initial)`; the step reads the accumulator as `acc`. Numbers stay decimal.
 
 ### Changed
 
