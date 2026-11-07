@@ -110,6 +110,22 @@ MS_TESTDB_PG_URL="postgres://testdb:${PGPW}@testdb-postgres:5432/samplePg" \
   ms/scripts/docker-cargo.sh test -p ms-zen-database --test testdb -- --include-ignored
 ```
 
+### StarRocks prepared statements (any StarRocks FE)
+
+`tests/starrocks_prepared.rs` creates its own fixture (`ms_zen_stale_params`) and checks that a
+Lookup with a correlated subquery returns the row asked for on one reused connection, that the
+server bug it works around is still there (`upstream_starrocks_reexecuted_statement_keeps_first_parameters`),
+and prints the per-query cost of re-preparing (`PREPARE_COST` lines). See
+`docs/starrocks-prepared-statement-stale-params.md`.
+
+```bash
+docker network create ms-zen-sr
+docker run -d --name ms-zen-starrocks --network ms-zen-sr starrocks/allin1-ubuntu:4.1.4
+# wait until `SHOW BACKENDS` reports Alive: true, then
+MS_DOCKER_NETWORK=ms-zen-sr MS_TEST_STARROCKS_URL='mysql://root@ms-zen-starrocks:9030'   ms/scripts/docker-cargo.sh test -p ms-zen-database --test starrocks_prepared -- --include-ignored --nocapture
+docker rm -f ms-zen-starrocks && docker network rm ms-zen-sr
+```
+
 ## C ABI smoke test
 
 `ms-test/ffi_smoke.c` links `libzen_ffi.a` with a C program and evaluates a decision with a
