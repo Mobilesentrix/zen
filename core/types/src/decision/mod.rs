@@ -214,6 +214,40 @@ pub struct TransformAttributes {
     pub execution_mode: TransformExecutionMode,
     #[serde(default)]
     pub pass_through: bool,
+    /// Sequential mode: expression (against the node input) giving the state before the first
+    /// item; absent means `null`.
+    #[serde(
+        default,
+        deserialize_with = "empty_string_is_none",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub state_field: Option<Arc<str>>,
+    /// Sequential mode: where the final state is written in the node output. Defaults to
+    /// `<outputPath>State`.
+    #[serde(
+        default,
+        deserialize_with = "empty_string_is_none",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub state_path: Option<Arc<str>>,
+    /// Sequential mode: most items evaluated before the step fails (an item output `stop: true`
+    /// ends the step earlier). Defaults to [`SEQUENTIAL_MAX_ITERATIONS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<u32>,
+}
+
+/// Default `maxIterations` of a sequential step.
+pub const SEQUENTIAL_MAX_ITERATIONS: u32 = 100_000;
+
+impl TransformAttributes {
+    /// Sequential mode: the path the final state is written to, if any.
+    pub fn final_state_path(&self) -> Option<Arc<str>> {
+        match (&self.state_path, &self.output_path) {
+            (Some(path), _) => Some(path.clone()),
+            (None, Some(output)) => Some(Arc::from(format!("{output}State"))),
+            (None, None) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, Default)]
@@ -221,7 +255,10 @@ pub struct TransformAttributes {
 pub enum TransformExecutionMode {
     #[default]
     Single,
+    /// Every item of `inputField` on its own; results collected in order.
     Loop,
+    /// Items one at a time, in order, carrying a state from each item to the next.
+    Sequential,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, Default)]
