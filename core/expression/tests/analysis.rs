@@ -550,6 +550,11 @@ fn analysis_read_spans() {
 }
 
 #[test]
+fn analysis_ms_list() {
+    run_test_file("ms_list", include_str!("data/analysis/ms_list.toml"));
+}
+
+#[test]
 fn analysis_nullable() {
     run_test_file("nullable", include_str!("data/analysis/nullable.toml"));
 }

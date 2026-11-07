@@ -1,4 +1,4 @@
-use crate::functions::{ClosureFunction, FunctionKind};
+use crate::functions::{ClosureFunction, FunctionKind, ACCUMULATOR};
 use crate::lexer::{LogicalOperator, Operator};
 use crate::parser::{Node, NodeMetadata};
 use crate::variable::Variable;
@@ -676,7 +676,7 @@ impl<'a> DependencyResolutionWalker<'a> {
             }
 
             Node::FunctionCall { kind, arguments } => {
-                if let FunctionKind::Closure(_) = kind {
+                if let FunctionKind::Closure(closure_function) = kind {
                     if arguments.len() >= 2 {
                         let collection_node = arguments[0];
                         let closure_node = arguments[1];
@@ -691,6 +691,9 @@ impl<'a> DependencyResolutionWalker<'a> {
                             Node::Closure { body, alias } => {
                                 let mut inner_scope = scope.clone();
                                 inner_scope.locals.insert(Variable::dollar_key_rc());
+                                if closure_function.has_accumulator() {
+                                    inner_scope.locals.insert(Rc::from(ACCUMULATOR));
+                                }
                                 inner_scope.pointer_collection = collection_source
                                     .as_ref()
                                     .filter(|source| !scope.is_local(source))
@@ -764,6 +767,11 @@ impl<'a> DependencyResolutionWalker<'a> {
                                     }
                                 }
                             }
+                        }
+
+                        // sortBy direction, reduce / scan initial value: outside the callback.
+                        for arg in arguments.iter().skip(2) {
+                            self.resolve(arg, scope);
                         }
                     } else {
                         for arg in arguments.iter() {
