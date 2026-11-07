@@ -2,13 +2,18 @@ use crate::compiler::error::{CompilerError, CompilerResult};
 use crate::compiler::opcode::{FetchFastTarget, Jump};
 use crate::compiler::{Compare, Opcode};
 use crate::functions::registry::FunctionRegistry;
-use crate::functions::{ClosureFunction, FunctionKind, InternalFunction, MethodRegistry};
+use crate::functions::{
+    ClosureFunction, FunctionKind, InternalFunction, MethodRegistry, ACCUMULATOR,
+};
 use crate::lexer::{ArithmeticOperator, ComparisonOperator, LogicalOperator, Operator};
 use crate::parser::Node;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::sync::Arc;
+
+#[path = "ms_list.rs"]
+mod ms_list;
 
 #[derive(Debug)]
 pub struct Compiler {
@@ -39,6 +44,10 @@ struct CompilerInner<'arena, 'bytecode_ref> {
     root: &'arena Node<'arena>,
     bytecode: &'bytecode_ref mut Vec<Opcode>,
     closure_aliases: Vec<Option<&'arena str>>,
+    /// Parallel to `closure_aliases`: the closure can read the accumulator `acc` (MS fork).
+    closure_accumulates: Vec<bool>,
+    /// Set right before compiling a reduce / scan callback (MS fork).
+    next_closure_accumulates: bool,
 }
 
 impl<'arena, 'bytecode_ref> CompilerInner<'arena, 'bytecode_ref> {
@@ -47,18 +56,28 @@ impl<'arena, 'bytecode_ref> CompilerInner<'arena, 'bytecode_ref> {
             root,
             bytecode,
             closure_aliases: Vec::new(),
+            closure_accumulates: Vec::new(),
+            next_closure_accumulates: false,
         }
     }
 
-    fn lookup_alias(&self, name: &str) -> Option<u32> {
+    /// Opcode that reads a closure-local name: an `as` alias (`Pointer`) or, inside a reduce /
+    /// scan callback, the accumulator `acc` (`Accumulator`). The innermost binding wins.
+    fn lookup_local(&self, name: &str) -> Option<Opcode> {
+        let depth_of = |index: usize| (self.closure_aliases.len() - 1 - index) as u32;
         self.closure_aliases
             .iter()
+            .zip(self.closure_accumulates.iter())
             .enumerate()
             .rev()
-            .find_map(|(index, &alias)| {
-                alias.and_then(|a| {
-                    (a == name).then_some((self.closure_aliases.len() - 1 - index) as u32)
-                })
+            .find_map(|(index, (&alias, &accumulates))| {
+                if alias == Some(name) {
+                    Some(Opcode::Pointer(depth_of(index)))
+                } else if accumulates && name == ACCUMULATOR {
+                    Some(Opcode::Accumulator(depth_of(index)))
+                } else {
+                    None
+                }
             })
     }
 
@@ -133,7 +152,7 @@ impl<'arena, 'bytecode_ref> CompilerInner<'arena, 'bytecode_ref> {
     fn compile_member_fast(&mut self, node: &'arena Node<'arena>) -> Option<Vec<FetchFastTarget>> {
         match node {
             Node::Root => Some(vec![FetchFastTarget::Root]),
-            Node::Identifier(v) => self.lookup_alias(v).is_none().then(|| {
+            Node::Identifier(v) => self.lookup_local(v).is_none().then(|| {
                 vec![
                     FetchFastTarget::Begin,
                     FetchFastTarget::String(Arc::from(*v)),
@@ -209,13 +228,16 @@ impl<'arena, 'bytecode_ref> CompilerInner<'arena, 'bytecode_ref> {
                 }))
             }
             Node::Identifier(v) => Ok(self.emit(
-                self.lookup_alias(v)
-                    .map_or_else(|| Opcode::FetchEnv(Arc::from(*v)), Opcode::Pointer),
+                self.lookup_local(v)
+                    .unwrap_or_else(|| Opcode::FetchEnv(Arc::from(*v))),
             )),
             Node::Closure { body, alias } => {
                 self.closure_aliases.push(*alias);
+                self.closure_accumulates
+                    .push(std::mem::take(&mut self.next_closure_accumulates));
                 let result = self.compile_node(body);
                 self.closure_aliases.pop();
+                self.closure_accumulates.pop();
                 result
             }
             Node::Parenthesized(v) => self.compile_node(v),
@@ -449,6 +471,12 @@ impl<'arena, 'bytecode_ref> CompilerInner<'arena, 'bytecode_ref> {
                     }))
                 }
                 FunctionKind::Closure(c) => match c {
+                    _ if !c.accepts_arguments(arguments.len()) => {
+                        Err(CompilerError::InvalidFunctionCall {
+                            name: kind.to_string(),
+                            message: "Invalid number of arguments".to_string(),
+                        })
+                    }
                     ClosureFunction::All => {
                         self.compile_argument(kind, arguments, 0)?;
                         self.emit(Opcode::Begin);
@@ -567,6 +595,7 @@ impl<'arena, 'bytecode_ref> CompilerInner<'arena, 'bytecode_ref> {
                         self.emit(Opcode::GetCount);
                         Ok(self.emit(Opcode::End))
                     }
+                    _ => self.compile_ms_list_closure(kind, *c, arguments),
                 },
             },
             Node::MethodCall {

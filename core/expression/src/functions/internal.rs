@@ -1,6 +1,7 @@
 use crate::functions::defs::{
     CompositeFunction, FunctionDefinition, FunctionSignature, StaticFunction,
 };
+use crate::functions::ms_list;
 use std::rc::Rc;
 use strum_macros::{Display, EnumIter, EnumString, IntoStaticStr};
 
@@ -13,6 +14,13 @@ pub enum InternalFunction {
     Flatten,
     Merge,
     MergeDeep,
+
+    // Lists (MobileSentrix, see ms_list.rs)
+    Sort,
+    Unique,
+    Join,
+    First,
+    Last,
 
     // String
     Upper,
@@ -104,6 +112,40 @@ impl From<&InternalFunction> for Rc<dyn FunctionDefinition> {
                     VT::Object(Default::default()).array(),
                     VT::Object(Default::default()),
                 ),
+            }),
+
+            IF::Sort => Rc::new(CompositeFunction {
+                implementation: Rc::new(ms_list::sort),
+                signatures: vec![
+                    FunctionSignature::single(VT::Any.array(), VT::Any.array()),
+                    FunctionSignature {
+                        parameters: vec![VT::Any.array(), VT::String],
+                        return_type: VT::Any.array(),
+                    },
+                ],
+            }),
+
+            IF::Unique => Rc::new(StaticFunction {
+                implementation: Rc::new(ms_list::unique),
+                signature: FunctionSignature::single(VT::Any.array(), VT::Any.array()),
+            }),
+
+            IF::Join => Rc::new(StaticFunction {
+                implementation: Rc::new(ms_list::join),
+                signature: FunctionSignature {
+                    parameters: vec![VT::Any.array(), VT::String],
+                    return_type: VT::String,
+                },
+            }),
+
+            IF::First => Rc::new(StaticFunction {
+                implementation: Rc::new(ms_list::first),
+                signature: FunctionSignature::single(VT::Any.array(), VT::Any),
+            }),
+
+            IF::Last => Rc::new(StaticFunction {
+                implementation: Rc::new(ms_list::last),
+                signature: FunctionSignature::single(VT::Any.array(), VT::Any),
             }),
 
             IF::Upper => Rc::new(StaticFunction {
@@ -341,6 +383,32 @@ pub(crate) mod imp {
     use std::rc::Rc;
     use std::str::FromStr;
 
+    /// Most compiled patterns kept per thread by `compiled_regex`; the cache is emptied when full.
+    const REGEX_CACHE_CAPACITY: usize = 256;
+
+    thread_local! {
+        static REGEX_CACHE: std::cell::RefCell<ahash::HashMap<Rc<str>, Regex>> =
+            std::cell::RefCell::new(ahash::HashMap::default());
+    }
+
+    /// The compiled regex for `pattern`, reused from this thread's cache when the same pattern was
+    /// compiled before. An invalid pattern is never cached, so it fails on every call.
+    fn compiled_regex(pattern: &str) -> anyhow::Result<Regex> {
+        REGEX_CACHE.with(|cache| {
+            if let Some(found) = cache.borrow().get(pattern) {
+                return Ok(found.clone());
+            }
+
+            let compiled = Regex::new(pattern).context("Invalid regular expression")?;
+            let mut cache = cache.borrow_mut();
+            if cache.len() >= REGEX_CACHE_CAPACITY {
+                cache.clear();
+            }
+            cache.insert(Rc::from(pattern), compiled.clone());
+            Ok(compiled)
+        })
+    }
+
     fn __internal_number_array(args: &Arguments, pos: usize) -> anyhow::Result<Vec<Decimal>> {
         let a = args.array(pos)?;
         let arr = a.borrow();
@@ -402,7 +470,7 @@ pub(crate) mod imp {
         let a = args.str(0)?;
         let b = args.str(1)?;
 
-        let regex = Regex::new(b.as_ref()).context("Invalid regular expression")?;
+        let regex = compiled_regex(b.as_ref())?;
 
         Ok(V::Bool(regex.is_match(a.as_ref())))
     }
@@ -426,7 +494,7 @@ pub(crate) mod imp {
         let a = args.str(0)?;
         let b = args.str(1)?;
 
-        let regex = Regex::new(b.as_ref()).context("Invalid regular expression")?;
+        let regex = compiled_regex(b.as_ref())?;
 
         let captures = regex
             .captures(a.as_ref())

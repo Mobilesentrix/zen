@@ -1,3 +1,4 @@
+use crate::functions::ms_list::KeyOp;
 use crate::functions::{FunctionKind, MethodKind};
 use crate::lexer::Bracket;
 use rust_decimal::Decimal;
@@ -55,6 +56,13 @@ pub enum Opcode {
     Pointer(u32),
     Begin,
     End,
+    /// Pushes the accumulator of the loop scope at the given depth (reduce / scan).
+    Accumulator(u32),
+    /// Pops a value into the accumulator of the innermost loop scope.
+    SetAccumulator,
+    /// Pops the key array built by the loop (and, for `sortBy`, the direction below it) and
+    /// pushes the result of the keyed list operation on the innermost loop scope's array.
+    ByKey(KeyOp),
     CallFunction {
         kind: FunctionKind,
         arg_count: u32,

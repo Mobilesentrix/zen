@@ -51,6 +51,8 @@ pub enum FailurePart {
     Config,
     /// A step inside a sub-decision (`nodeId` names it).
     SubDecision,
+    /// The `stateField` of a sequential step.
+    StateField,
 }
 
 /// The `error` object of the failing node's trace entry.
@@ -74,6 +76,9 @@ pub struct NodeFailure {
     /// Sub-decision: the id of the step inside it that failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
+    /// Sequential step: the 0-based index of the item that failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_index: Option<usize>,
 }
 
 impl NodeFailure {
@@ -86,6 +91,7 @@ impl NodeFailure {
             key: None,
             missing: Vec::new(),
             node_id: None,
+            item_index: None,
         }
     }
 
@@ -129,6 +135,11 @@ impl NodeFailure {
 
     pub fn with_missing(mut self, missing: Vec<String>) -> Self {
         self.missing = missing;
+        self
+    }
+
+    pub fn with_item_index(mut self, index: usize) -> Self {
+        self.item_index = Some(index);
         self
     }
 }
@@ -192,12 +203,41 @@ pub fn describe(error: &(dyn Error + 'static)) -> NodeFailure {
     NodeFailure::new(FailureKind::Evaluation, error.to_string())
 }
 
+/// An item of a sequential step failed: the item's failure, with its index. Displays as
+/// `item <index>: <error>`.
+#[derive(Debug)]
+pub struct ItemFailed {
+    pub index: usize,
+    pub error: Box<dyn Error>,
+}
+
+impl Display for ItemFailed {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "item {}: {}", self.index, self.error)
+    }
+}
+
+impl Error for ItemFailed {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.error.as_ref())
+    }
+}
+
+/// The error of item `index` of a sequential step, wrapped so that its message and its
+/// `error` trace entry (`itemIndex`) name the item.
+pub fn item(index: usize, error: Box<dyn Error>) -> FailedNode {
+    let failure = describe(error.as_ref()).with_item_index(index);
+    FailedNode::new(failure, ItemFailed { index, error })
+}
+
 /// A sub-decision failed at `node_id`: its step's failure, pointed at that step.
 pub fn sub_decision(node_id: &str, source: &(dyn Error + 'static)) -> NodeFailure {
     let inner = describe(source);
     NodeFailure {
         part: Some(FailurePart::SubDecision),
         node_id: Some(inner.node_id.clone().unwrap_or_else(|| node_id.to_string())),
+        // an item index belongs to the step inside (it is on that step's trace entry)
+        item_index: None,
         ..inner
     }
 }

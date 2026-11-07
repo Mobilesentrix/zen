@@ -123,11 +123,12 @@ node has it (the key is absent on every other entry, and on every entry of a suc
 |---|---|---|
 | `kind` | yes | `parse` (lexer/parser/compiler error, invalid node config or query template), `missingValue` (a value it needs is absent or null), `type` (a value has the wrong type, incl. "Expected an array"), `evaluation` (anything else: database error, function error, result handling) |
 | `message` | yes | the underlying cause; the full placeholder text for a database placeholder |
-| `part` | no | `expression` (expression row, `key` names it), `inputField` (the node's input field / loop input), `placeholder`, `query`, `config`, `subDecision` |
+| `part` | no | `expression` (expression row, `key` names it), `inputField` (the node's input field / loop input), `placeholder`, `query`, `config`, `subDecision`, `stateField` (sequential step) |
 | `expression` | no | the exact text that failed: the expression, the input field, the `{{ }}` placeholder, the SQL |
 | `key` | no | expression node: the output key of the failing row |
 | `missing` | no | dotted paths the expression reads that were absent or null (a read through `x[0]` is reported as `x`) |
 | `nodeId` | no | `subDecision`: the step inside the sub-decision that failed (its own entry, in this node's `traceData`, has the full `error`) |
+| `itemIndex` | no | sequential step (`executionMode: "sequential"`, docs/adr/0006): the 0-based index of the item that failed; the error text starts `item <index>: ` |
 
 A node without structure (function node, custom node callback, validation) still gets
 `{kind, message}`; validation errors are `type`. Decision-table cells never fail a table
@@ -195,6 +196,11 @@ as code 7 `EvaluationError`, details e.g.
   `cost = 12.5` and its pruning (a DOUBLE parameter would become `CAST(cost AS DOUBLE) = …`).
   Integers stay LONGLONG everywhere. DECIMAL / NUMERIC result columns are decoded as exact JSON
   numbers (arbitrary precision in the FFI build), never as strings.
+* **No prepared-statement reuse on StarRocks**: StarRocks (3.5.20, 4.1.4) re-executes a
+  prepared statement whose query has a subquery with the parameters of its first execution, so a
+  Lookup could return another request's row. On a StarRocks pool every query is prepared,
+  executed and closed (one extra round trip); `statementCacheCapacity` only applies to MySQL,
+  MariaDB and Postgres. See `docs/starrocks-prepared-statement-stale-params.md`.
 * Timeouts are milliseconds.
 * `default`: used by nodes without `instance`. If omitted and exactly one connection exists,
   that one is the default.
