@@ -933,33 +933,13 @@ impl<'a> GraphAnalyzer<'a> {
         if attributes.input_field.is_some() && matches!(base, VariableType::Any) {
             self.validate = false;
         }
-        // sequential mode: the state type, from `stateField` and then from the items' `state`
-        let mut state_type = match (&attributes.execution_mode, &attributes.state_field) {
-            (TransformExecutionMode::Sequential, Some(field)) => {
-                let field_scope =
-                    Self::scope_with_nodes(scope_input, &self.nodes_scope.shallow_clone());
-                self.check_expression(
-                    &node.id,
-                    None,
-                    None,
-                    field,
-                    ExpressionKind::Standard,
-                    &field_scope,
-                )
-            }
-            _ => VariableType::Null,
-        };
 
         let (handler_scope, mut output) = match attributes.execution_mode {
             TransformExecutionMode::Single => {
                 let output = handler(self, &base);
                 (base, output)
             }
-            TransformExecutionMode::Loop | TransformExecutionMode::Sequential => {
-                let sequential = matches!(
-                    attributes.execution_mode,
-                    TransformExecutionMode::Sequential
-                );
+            TransformExecutionMode::Loop => {
                 let element = match base.iterator() {
                     Some(inner) => inner.as_ref().shallow_clone(),
                     None => {
@@ -973,10 +953,7 @@ impl<'a> GraphAnalyzer<'a> {
                                             .as_ref()
                                             .map(|_| CursorTarget::TransformInput),
                                     ),
-                                format!(
-                                    "{} execution expects an array input, got `{base}`",
-                                    if sequential { "sequential" } else { "loop" }
-                                ),
+                                format!("loop execution expects an array input, got `{base}`"),
                             ));
                         }
                         self.validate = false;
@@ -986,16 +963,7 @@ impl<'a> GraphAnalyzer<'a> {
                 if matches!(element, VariableType::Any) {
                     self.validate = false;
                 }
-                let element = match sequential {
-                    true => Self::sequential_item_type(&element, &state_type),
-                    false => element,
-                };
                 let mut output = handler(self, &element);
-                if sequential {
-                    if let Some(step_state) = output.dot("state") {
-                        state_type = Self::next_state_type(&state_type, &step_state);
-                    }
-                }
                 if attributes.pass_through {
                     output = Self::merge_patch_type(&element, &output);
                 }
@@ -1003,20 +971,7 @@ impl<'a> GraphAnalyzer<'a> {
             }
         };
 
-        if matches!(
-            attributes.execution_mode,
-            TransformExecutionMode::Sequential
-        ) {
-            // results at outputPath (when set), the final state (any type) at statePath
-            let wrapped = VariableType::empty_object();
-            if let Some(output_path) = &attributes.output_path {
-                wrapped.insert_at_path(output_path, &output, true);
-            }
-            if let Some(state_path) = attributes.final_state_path() {
-                wrapped.insert_at_path(&state_path, &state_type, true);
-            }
-            output = wrapped;
-        } else if let Some(output_path) = &attributes.output_path {
+        if let Some(output_path) = &attributes.output_path {
             let wrapped = VariableType::empty_object();
             wrapped.insert_at_path(output_path, &output, true);
             output = wrapped;
@@ -1026,30 +981,6 @@ impl<'a> GraphAnalyzer<'a> {
         }
 
         (handler_scope, output)
-    }
-
-    /// The input of one sequential item: the item's fields (`item` when it is not an object)
-    /// and `state` (typed from `stateField`).
-    fn sequential_item_type(element: &VariableType, state_type: &VariableType) -> VariableType {
-        let input = VariableType::empty_object();
-        input.insert_at_path("state", state_type, true);
-        match element {
-            VariableType::Object(_) => element.merge(&input),
-            VariableType::Any => VariableType::Any,
-            other => {
-                input.insert_at_path("item", other, true);
-                input
-            }
-        }
-    }
-
-    /// Type-level mirror of the runtime state update: an object merged into an object state,
-    /// any other value replacing it.
-    fn next_state_type(state: &VariableType, step: &VariableType) -> VariableType {
-        match (state, step) {
-            (VariableType::Object(_), VariableType::Object(_)) => state.merge(step),
-            _ => step.shallow_clone(),
-        }
     }
 
     /// Type-level mirror of the runtime pass-through merge (`Variable::merge_clone`).

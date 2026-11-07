@@ -430,7 +430,7 @@ impl NodeContextBase {
         })
     }
 
-    pub(crate) fn make_error<Error>(&self, error: Error) -> NodeError
+    fn make_error<Error>(&self, error: Error) -> NodeError
     where
         Error: Into<Box<dyn std::error::Error>>,
     {

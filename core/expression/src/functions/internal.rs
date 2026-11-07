@@ -1,7 +1,6 @@
 use crate::functions::defs::{
     CompositeFunction, FunctionDefinition, FunctionSignature, StaticFunction,
 };
-use crate::functions::ms_list;
 use std::rc::Rc;
 use strum_macros::{Display, EnumIter, EnumString, IntoStaticStr};
 
@@ -14,13 +13,6 @@ pub enum InternalFunction {
     Flatten,
     Merge,
     MergeDeep,
-
-    // Lists (MobileSentrix, see ms_list.rs)
-    Sort,
-    Unique,
-    Join,
-    First,
-    Last,
 
     // String
     Upper,
@@ -112,40 +104,6 @@ impl From<&InternalFunction> for Rc<dyn FunctionDefinition> {
                     VT::Object(Default::default()).array(),
                     VT::Object(Default::default()),
                 ),
-            }),
-
-            IF::Sort => Rc::new(CompositeFunction {
-                implementation: Rc::new(ms_list::sort),
-                signatures: vec![
-                    FunctionSignature::single(VT::Any.array(), VT::Any.array()),
-                    FunctionSignature {
-                        parameters: vec![VT::Any.array(), VT::String],
-                        return_type: VT::Any.array(),
-                    },
-                ],
-            }),
-
-            IF::Unique => Rc::new(StaticFunction {
-                implementation: Rc::new(ms_list::unique),
-                signature: FunctionSignature::single(VT::Any.array(), VT::Any.array()),
-            }),
-
-            IF::Join => Rc::new(StaticFunction {
-                implementation: Rc::new(ms_list::join),
-                signature: FunctionSignature {
-                    parameters: vec![VT::Any.array(), VT::String],
-                    return_type: VT::String,
-                },
-            }),
-
-            IF::First => Rc::new(StaticFunction {
-                implementation: Rc::new(ms_list::first),
-                signature: FunctionSignature::single(VT::Any.array(), VT::Any),
-            }),
-
-            IF::Last => Rc::new(StaticFunction {
-                implementation: Rc::new(ms_list::last),
-                signature: FunctionSignature::single(VT::Any.array(), VT::Any),
             }),
 
             IF::Upper => Rc::new(StaticFunction {

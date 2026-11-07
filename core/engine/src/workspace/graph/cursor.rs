@@ -110,10 +110,7 @@ impl Db {
         if let Some(path) = &attributes.output_path {
             output = output.dot(path).unwrap_or(VariableType::Any);
         }
-        if matches!(
-            attributes.execution_mode,
-            TransformExecutionMode::Loop | TransformExecutionMode::Sequential
-        ) {
+        if matches!(attributes.execution_mode, TransformExecutionMode::Loop) {
             output = element(output);
         }
         if collect {

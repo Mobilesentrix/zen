@@ -1,8 +1,7 @@
 use std::rc::Rc;
 
 use crate::functions::{
-    ClosureFunction, FunctionKind, FunctionRegistry, InternalFunction, MethodKind, MethodRegistry,
-    ACCUMULATOR,
+    FunctionKind, FunctionRegistry, InternalFunction, MethodKind, MethodRegistry,
 };
 use crate::intellisense::type_provider::TypesProvider;
 use crate::lexer::codes::is_token_type;
@@ -901,16 +900,8 @@ impl<'p, 'a> Classifier<'p, 'a> {
             else {
                 continue;
             };
-            if !self.is_closure(name) || frame.commas != 1 {
+            if !self.is_closure(name) || frame.commas == 0 {
                 continue;
-            }
-            let accumulates = matches!(
-                FunctionKind::try_from(self.text(self.items[name].span)),
-                Ok(FunctionKind::Closure(c)) if c.has_accumulator()
-            );
-            if accumulates && !out.iter().any(|(n, _)| n.as_ref() == ACCUMULATOR) {
-                // The initial value follows the callback, so its type is not known here.
-                out.push((Rc::from(ACCUMULATOR), VariableType::Any));
             }
             let name: Rc<str> = self
                 .collection_end(frame)
@@ -1444,12 +1435,8 @@ impl<'p, 'a> Classifier<'p, 'a> {
         )
     }
 
-    /// A closure whose callback returns any value (map, sortBy key, reduce step, ...).
     fn is_mapping_closure(&self, name: usize) -> bool {
-        matches!(
-            FunctionKind::try_from(self.text(self.items[name].span)),
-            Ok(FunctionKind::Closure(c)) if !c.is_predicate()
-        )
+        matches!(self.text(self.items[name].span), "map" | "flatMap")
     }
 
     fn is_as(&self, item: &Item) -> bool {
@@ -1687,9 +1674,7 @@ impl<'p, 'a> Classifier<'p, 'a> {
                     name,
                     method: false,
                 } => {
-                    // Only the callback (argument 1) binds `#`; a trailing argument
-                    // (sortBy direction, reduce initial value) is outside it.
-                    return (self.is_closure(name) && frame.commas == 1).then_some((frame, name));
+                    return (self.is_closure(name) && frame.commas >= 1).then_some((frame, name));
                 }
                 _ => return None,
             }
@@ -1760,11 +1745,7 @@ impl<'p, 'a> Classifier<'p, 'a> {
                 return self.start(None);
             };
             slot.expected = match &kind {
-                FunctionKind::Closure(_) if index == 1 => return self.closure_head(frames),
-                FunctionKind::Closure(ClosureFunction::SortBy) if index == 2 => {
-                    Some(VariableType::String)
-                }
-                FunctionKind::Closure(_) if index >= 2 => None,
+                FunctionKind::Closure(_) if index >= 1 => return self.closure_head(frames),
                 FunctionKind::Closure(_) => Some(VariableType::Array(Rc::new(VariableType::Any))),
                 FunctionKind::Internal(InternalFunction::Contains) if index == 1 => {
                     self.haystack_element(frame).or_else(|| {

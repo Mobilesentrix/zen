@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use chrono_tz::Tz;
 
-use crate::functions::{DateMethod, FunctionKind, InternalFunction, MethodKind};
+use crate::functions::{ClosureFunction, DateMethod, FunctionKind, InternalFunction, MethodKind};
 use crate::lexer::{
     ArithmeticOperator, Bracket, ComparisonOperator, LogicalOperator, Operator, QuotationMark,
     Token, TokenKind,
@@ -230,7 +230,10 @@ impl<'a> NodeTable<'a> {
     ) -> Vec<Option<VariableType>> {
         match kind {
             FunctionKind::Closure(cf) => {
-                let body_expected = cf.is_predicate().then_some(VariableType::Bool);
+                let body_expected = match cf {
+                    ClosureFunction::Map | ClosureFunction::FlatMap => None,
+                    _ => Some(VariableType::Bool),
+                };
                 vec![Self::closure_membership(parsed, arguments), body_expected]
             }
             FunctionKind::Internal(InternalFunction::Date) => vec![Some(VariableType::Date)],
