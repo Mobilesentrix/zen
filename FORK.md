@@ -21,6 +21,7 @@ The C contract is in [MS-FFI.md](MS-FFI.md); build and test commands are in [MS-
 | Independent database steps start as soon as their inputs are known, when their SQL only reads | `core/engine/src/decision_graph/early.rs`, `core/engine/src/nodes/statement.rs` | Waits on different lookups overlap; the walk order and results are unchanged; a statement that may write runs where and as often as the walk runs it |
 | Large objects and traces keep insertion order (IndexMap) | `core/types/src/variable/map.rs`, `decision_graph/tracer.rs` | Output key order is the same on every run |
 | JS function results convert each distinct key once | `core/engine/src/nodes/function/v2/serde.rs` | Arrays of objects with the same fields |
+| `executionMode: "sequential"` for decision, decision-table and expression steps: items in order, a state carried from each item to the next (`stateField`, `statePath`, `maxIterations`, `stop`), failing items named by index | `core/engine/src/nodes/transform_attributes.rs`, `core/types/src/decision/mod.rs`, `nodes/failure.rs`, `workspace/graph/{analysis,cursor,enhance}.rs` | Rules where step N depends on step N-1 (running budgets, allocations, timelines, bisection) run as decision tables instead of JavaScript ([ADR 0006](docs/adr/0006-sequential-execution-mode.md)) |
 | Benchmarks and profiling harness | `ms/speedbench`, `ms/database/tests/{dbspeed,listing}.rs` | Measuring the above; not part of the shipped lib |
 
 Every upstream export in `zen_engine.h` is unchanged. Parity tests: `core/engine/tests/ms_compiled_parity.rs`
