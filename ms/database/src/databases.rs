@@ -46,6 +46,16 @@ enum RuntimeHolder {
     Borrowed,
 }
 
+impl RuntimeHolder {
+    /// Stops an owned runtime without waiting. Dropping a `Runtime` inside an async context
+    /// panics, and construction may run in one (a Rust embedder creating its engine in a task).
+    fn release(self) {
+        if let RuntimeHolder::Owned(Some(runtime)) = self {
+            runtime.shutdown_background();
+        }
+    }
+}
+
 /// All configured connections. Construct once per engine and share (`Arc`).
 pub struct Databases {
     runtime: RuntimeHolder,
@@ -203,9 +213,17 @@ impl Databases {
         handle: Handle,
     ) -> Result<Self, DatabaseError> {
         let runtime_context = handle.enter();
-        let opened = open_connections(config)?;
-        let default = default_connection(config, &opened)?;
+        let checked = open_connections(config).and_then(|opened| {
+            default_connection(config, &opened).map(|default| (opened, default))
+        });
         drop(runtime_context);
+        let (opened, default) = match checked {
+            Ok(checked) => checked,
+            Err(error) => {
+                runtime.release();
+                return Err(error);
+            }
+        };
 
         let OpenedConnections {
             by_name,
@@ -329,6 +347,19 @@ impl Databases {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An invalid configuration is an error, not a panic, when the engine is created from
+    /// inside an async task (the owned runtime must not be dropped there).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn invalid_config_inside_an_async_context_is_an_error() {
+        for bad in [
+            r#"{"connections":{"x":{"url":"oracle://h"}}}"#,
+            r#"{"connections":{},"default":"missing"}"#,
+            r#"{"connections":{"x":{"url":"mysql://h:notaport/db"}}}"#,
+        ] {
+            assert!(Databases::from_json(bad).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn errors_never_echo_credentials() {

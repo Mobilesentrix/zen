@@ -7012,12 +7012,14 @@ name = "zen-uniffi"
 version = "2.1.6"
 dependencies = [
  "async-trait",
+ "ms-zen-database",
  "serde",
  "serde_json",
  "tokio",
  "uniffi",
  "zen-engine",
  "zen-expression",
+ "zip",
 ]
 
 [[package]]

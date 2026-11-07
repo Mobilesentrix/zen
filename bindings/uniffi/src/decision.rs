@@ -1,6 +1,7 @@
 use crate::engine::ZenEvaluateOptions;
 use crate::error::ZenError;
 use crate::types::{JsonBuffer, ZenEngineResponse};
+use ms_zen_database::with_evaluation_scope;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::runtime::Handle;
@@ -38,8 +39,7 @@ impl ZenDecision {
             Handle::current().block_on(async move {
                 let context = zen_engine::Variable::try_from_value(context)
                     .map_err(|e| ZenError::ValidationError(e.to_string()))?;
-                decision
-                    .evaluate_with_opts(context, options.into())
+                with_evaluation_scope(decision.evaluate_with_opts(context, options.into()))
                     .await
                     .map(|response| ZenEngineResponse::try_from(response))
                     .map_err(|err| {

@@ -265,9 +265,12 @@ with that connection's database privileges. Consequences for the embedder:
 
 ## 3. JDM node shape the engine accepts
 
-zen 2.x has no `databaseNode` type; the Go side must rewrite each editor `databaseNode` into a
-`customNode` with kind `"database"` (no SQL generation in Rust). `config` is either the output
-of module-go `TransformDatabaseNodes` or the raw editor content — both are accepted:
+zen 2.x has no `databaseNode` type; each editor `databaseNode` is rewritten into a `customNode`
+with kind `"database"` before the engine reads the rule. Through the C API the Go side does it
+(module-go `TransformDatabaseNodes`); the uniffi binding (`ZenEngine.withDatabase`) and Rust
+embedders use the same conversion in Rust (`ms_zen_database::editor`, kept equal to the Go one by
+`ms/database/tests/editor_parity.rs`). `config` is either that output or the raw editor content —
+both are accepted:
 
 ```json
 { "id": "db", "name": "rows", "type": "customNode",
@@ -290,8 +293,8 @@ of module-go `TransformDatabaseNodes` or the raw editor content — both are acc
 | `inputField` | expression selecting the node input | whole input |
 | `executionMode` | `"single"` or `"loop"` (one query per element of `inputField`) | `"single"` |
 
-`selectedTables` / `whereClauseGroup` are *not* interpreted in Rust: module-go keeps building
-that SQL. Other fields (`engine`, `database`, `instanceName`, …) are ignored.
+`selectedTables` / `whereClauseGroup` are not read by the node itself: the conversion compiles
+them into `query` (module-go, or `ms_zen_database::editor`). Other fields (`engine`, `database`, `instanceName`, …) are ignored.
 Result: `{"rows": [ {col: value…} ], "rowsCount": n}` placed at `outputPath`; trace data is the
 same object (array of them in loop mode). Every other custom-node kind goes to the Go callback.
 
