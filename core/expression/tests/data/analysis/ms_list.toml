@@ -1,0 +1,220 @@
+# MobileSentrix list functions: return types, reads and diagnostics
+
+[[test]]
+name = "sort keeps the array type"
+expression = "sort(nums)"
+input = '{"nums": [3, 1, 2]}'
+reads = [
+    { type = "direct", path = ["nums"] },
+]
+
+[test.loose]
+return_type = '{"Array":"Number"}'
+
+[test.strict]
+return_type = '{"Array":"Number"}'
+
+[[test]]
+name = "sort with direction"
+expression = "sort(nums, 'desc')"
+input = '{"nums": [3, 1, 2]}'
+
+[test.loose]
+return_type = '{"Array":"Number"}'
+
+[test.strict]
+return_type = '{"Array":"Number"}'
+
+[[test]]
+name = "unique keeps the array type"
+expression = "unique(names)"
+input = '{"names": ["a", "b"]}'
+
+[test.loose]
+return_type = '{"Array":"String"}'
+
+[test.strict]
+return_type = '{"Array":"String"}'
+
+[[test]]
+name = "first is a nullable element"
+expression = "first(nums)"
+input = '{"nums": [3, 1, 2]}'
+
+[test.loose]
+return_type = '{"Nullable":"Number"}'
+
+[test.strict]
+return_type = '{"Nullable":"Number"}'
+
+[[test]]
+name = "join returns a string"
+expression = "join(nums, ',')"
+input = '{"nums": [3, 1, 2]}'
+
+[test.loose]
+return_type = '"String"'
+
+[test.strict]
+return_type = '"String"'
+
+[[test]]
+name = "sortBy keeps the array type"
+expression = "sortBy(nums, -#)"
+input = '{"nums": [3, 1, 2]}'
+reads = [
+    { type = "iteration", collection = ["nums"], reads = [] },
+]
+
+[test.loose]
+return_type = '{"Array":"Number"}'
+
+[test.strict]
+return_type = '{"Array":"Number"}'
+
+[[test]]
+name = "sortBy direction reads stay outside the iteration"
+expression = "sortBy(nums, #, dir)"
+input = '{"nums": [3, 1, 2], "dir": "desc"}'
+reads = [
+    { type = "iteration", collection = ["nums"], reads = [] },
+    { type = "direct", path = ["dir"] },
+]
+
+[test.loose]
+return_type = '{"Array":"Number"}'
+
+[test.strict]
+return_type = '{"Array":"Number"}'
+
+[[test]]
+name = "sortBy with a multi-key alias reads"
+expression = "sortBy(rows as r, [r.a, r.b])"
+input = '{"rows": [{"a": 1, "b": 2}]}'
+reads = [
+    { type = "iteration", collection = ["rows"], alias = "r", reads = [
+        { type = "direct", path = ["r", "a"] },
+        { type = "direct", path = ["r", "b"] },
+    ] },
+]
+
+[test.loose]
+
+[test.strict]
+
+[[test]]
+name = "minBy is a nullable element"
+expression = "minBy(nums, #)"
+input = '{"nums": [3, 1, 2]}'
+
+[test.loose]
+return_type = '{"Nullable":"Number"}'
+
+[test.strict]
+return_type = '{"Nullable":"Number"}'
+
+[[test]]
+name = "countDistinct is a number"
+expression = "countDistinct(nums, #)"
+input = '{"nums": [3, 1, 2]}'
+
+[test.loose]
+return_type = '"Number"'
+
+[test.strict]
+return_type = '"Number"'
+
+[[test]]
+name = "uniqueBy keeps the array type"
+expression = "uniqueBy(nums, #)"
+input = '{"nums": [3, 1, 2]}'
+
+[test.loose]
+return_type = '{"Array":"Number"}'
+
+[test.strict]
+return_type = '{"Array":"Number"}'
+
+[[test]]
+name = "reduce: acc is local, the initial value is read outside"
+expression = "reduce(rows as r, acc + r.qty, base)"
+input = '{"rows": [{"qty": 1}], "base": 0}'
+reads = [
+    { type = "iteration", collection = ["rows"], alias = "r", reads = [
+        { type = "direct", path = ["r", "qty"] },
+    ] },
+    { type = "direct", path = ["base"] },
+]
+
+[test.loose]
+return_type = '"Number"'
+
+[test.strict]
+return_type = '"Number"'
+
+[[test]]
+name = "scan is an array of the callback type"
+expression = "scan(nums, acc + #, 0)"
+input = '{"nums": [3, 1, 2]}'
+
+[test.loose]
+return_type = '{"Array":"Number"}'
+
+[test.strict]
+return_type = '{"Array":"Number"}'
+
+[[test]]
+name = "reduce accumulator types from the initial value"
+expression = "reduce(nums, acc + ' ' + string(#), '')"
+input = '{"nums": [3, 1, 2]}'
+
+[test.loose]
+return_type = '"String"'
+
+[test.strict]
+return_type = '"String"'
+
+[[test]]
+name = "sortBy direction must be a string"
+expression = "sortBy(nums, #, 1)"
+input = '{"nums": [3, 1, 2]}'
+
+[test.loose]
+diagnostics = [
+    { source = "type_check", severity = "error" },
+]
+
+[test.strict]
+diagnostics = [
+    { source = "type_check", severity = "error" },
+]
+
+[[test]]
+name = "sortBy key cannot be an object"
+expression = "sortBy(rows, #)"
+input = '{"rows": [{"a": 1}]}'
+
+[test.loose]
+diagnostics = [
+    { source = "type_check", severity = "error" },
+]
+
+[test.strict]
+diagnostics = [
+    { source = "type_check", severity = "error" },
+]
+
+[[test]]
+name = "reduce without an initial value"
+expression = "reduce(nums, acc + #)"
+input = '{"nums": [3, 1, 2]}'
+
+[test.loose]
+diagnostics = [
+    { source = "type_check", severity = "error" },
+]
+
+[test.strict]
+diagnostics = [
+    { source = "type_check", severity = "error" },
+]

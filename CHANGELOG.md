@@ -4,6 +4,13 @@
 
 Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons.
 
+### Fixed
+
+- StarRocks Lookups with a subquery could return another request's row: StarRocks re-executes a
+  prepared statement with the parameters of its first execution. On StarRocks every query is now
+  prepared, executed and closed (one extra round trip, about 1 ms for a point lookup, 8 ms for a
+  correlated subquery on a local FE). `docs/starrocks-prepared-statement-stale-params.md`.
+
 ### Added
 
 - Database node (custom node kind `database`) for MySQL, StarRocks and Postgres: `{{ expr }}`
@@ -24,7 +31,16 @@ Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons
   partial trace and, on the failing node, a structured `error`.
 - Response bodies are written into `malloc` memory, so the caller can read a large response without a
   copy. The request context is parsed straight into a `Variable`.
+- `executionMode: "sequential"` for decision, decision-table and expression steps: items evaluated in
+  order with a state carried between them, early `stop`, `maxIterations`; a failing item is named by
+  its index (ADR 0006).
 - Benchmarks and a profiling harness (`ms/speedbench`), not part of the shipped library.
+- Expression list functions, so rules no longer need a Function node to sort, rank, group or keep a
+  running total: `sort(array, 'desc'?)`, `sortBy(array, key, 'desc'?)` (stable, nulls last, an array
+  key orders by several fields), `minBy` / `maxBy` (the element; first on ties), `unique`,
+  `uniqueBy`, `countDistinct`, `groupBy` (object of arrays), `keyBy` (first element per key wins),
+  `join(array, separator)`, `first`, `last`, `reduce(array, step, initial)` and
+  `scan(array, step, initial)`; the step reads the accumulator as `acc`. Numbers stay decimal.
 
 ### Changed
 
