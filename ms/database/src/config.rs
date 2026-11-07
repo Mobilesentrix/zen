@@ -52,7 +52,8 @@ pub struct ConnectionConfig {
     pub idle_timeout: Option<u64>,
     /// Milliseconds.
     pub max_lifetime: Option<u64>,
-    /// Prepared statements cached per connection (sqlx default 100).
+    /// Prepared statements cached per connection (sqlx default 100). Not used on StarRocks,
+    /// which never re-executes a prepared statement (see `connection::reuses_prepared_statements`).
     pub statement_cache_capacity: Option<usize>,
     /// Open `minConnections` (at least one) at engine creation and fail if unreachable.
     /// Default false: pools are created lazily so one unreachable instance does not stop

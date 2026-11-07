@@ -4,6 +4,13 @@
 
 Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons.
 
+### Fixed
+
+- StarRocks Lookups with a subquery could return another request's row: StarRocks re-executes a
+  prepared statement with the parameters of its first execution. On StarRocks every query is now
+  prepared, executed and closed (one extra round trip, about 1 ms for a point lookup, 8 ms for a
+  correlated subquery on a local FE). `docs/starrocks-prepared-statement-stale-params.md`.
+
 ### Added
 
 - Database node (custom node kind `database`) for MySQL, StarRocks and Postgres: `{{ expr }}`
