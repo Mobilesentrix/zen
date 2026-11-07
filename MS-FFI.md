@@ -195,6 +195,11 @@ as code 7 `EvaluationError`, details e.g.
   `cost = 12.5` and its pruning (a DOUBLE parameter would become `CAST(cost AS DOUBLE) = …`).
   Integers stay LONGLONG everywhere. DECIMAL / NUMERIC result columns are decoded as exact JSON
   numbers (arbitrary precision in the FFI build), never as strings.
+* **No prepared-statement reuse on StarRocks**: StarRocks (3.5.20, 4.1.4) re-executes a
+  prepared statement whose query has a subquery with the parameters of its first execution, so a
+  Lookup could return another request's row. On a StarRocks pool every query is prepared,
+  executed and closed (one extra round trip); `statementCacheCapacity` only applies to MySQL,
+  MariaDB and Postgres. See `docs/starrocks-prepared-statement-stale-params.md`.
 * Timeouts are milliseconds.
 * `default`: used by nodes without `instance`. If omitted and exactly one connection exists,
   that one is the default.
