@@ -1,6 +1,7 @@
 uniffi::setup_scaffolding!();
 mod config;
 mod custom_node;
+mod database;
 mod decision;
 mod engine;
 mod error;

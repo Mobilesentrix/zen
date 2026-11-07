@@ -25,6 +25,12 @@ Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons
 - Response bodies are written into `malloc` memory, so the caller can read a large response without a
   copy. The request context is parsed straight into a `Variable`.
 - Benchmarks and a profiling harness (`ms/speedbench`), not part of the shipped library.
+- The editor's Lookup step (`databaseNode`) is converted into the database node in Rust
+  (`ms_zen_database::editor`: `prepare_decision_content`, `transform_database_nodes`), the same SQL
+  and config as the Go module (parity test over 3,000 cases).
+- uniffi: `ZenEngine.withDatabase(loader, customNode, databaseConfig, routeByInstance)` runs rules
+  with Lookup steps (every loader kind and `createDecision` convert them); error
+  `DatabaseConfigError`. Evaluations run inside the database de-duplication scope.
 
 ### Changed
 
@@ -37,6 +43,8 @@ Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons
 
 ### Fixed
 
+- An invalid database configuration given from inside an async task is an error, not a panic
+  (the database runtime was dropped in an async context).
 - A panic inside an `extern "C"` function no longer aborts the host process; every export has a panic
   guard.
 - The trace of a failed evaluation is no longer serialised as `null`.
