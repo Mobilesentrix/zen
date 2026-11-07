@@ -50,6 +50,10 @@ Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons
 - Large objects and traces keep insertion order.
 - JS function results convert each distinct key once.
 - `compile()` works for engines created with a loader config.
+- `extract()` and `matches()` reuse compiled regexes (per thread, up to 256 patterns; the cache is
+  emptied when full) instead of compiling the pattern on every call: about 180 us per call before. PO
+  Plan ship-mode rule 750 -> 243 us/SKU, warehouse-transfers 1,750 -> 1,212 us/SKU, same outputs.
+  Two further engine changes (P2, P3) are proposals only: `docs/engine-speed-proposals.md`.
 
 ### Fixed
 
