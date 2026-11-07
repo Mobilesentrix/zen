@@ -179,7 +179,7 @@ fn walk_graph(
             DecisionNodeKind::ExpressionNode { content } => {
                 let loop_mode = matches!(
                     content.transform_attributes.execution_mode,
-                    TransformExecutionMode::Loop | TransformExecutionMode::Sequential
+                    TransformExecutionMode::Loop
                 );
                 let iterations = trace_entries(node_trace.trace_data.as_ref(), loop_mode);
                 for row in content.expressions.iter() {
@@ -232,7 +232,7 @@ fn walk_graph(
             DecisionNodeKind::DecisionTableNode { content } => {
                 let loop_mode = matches!(
                     content.transform_attributes.execution_mode,
-                    TransformExecutionMode::Loop | TransformExecutionMode::Sequential
+                    TransformExecutionMode::Loop
                 );
                 let collect = matches!(content.hit_policy, DecisionTableHitPolicy::Collect);
                 let column_collect =

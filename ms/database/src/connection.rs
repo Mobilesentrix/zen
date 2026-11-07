@@ -190,9 +190,7 @@ impl Connection {
         *execute_started = Instant::now();
         let flavor = self.flavor.get().copied().unwrap_or(Flavor::MySql);
         let arguments = mysql_arguments(&query.params, flavor)?;
-        let stream = sqlx::query_with(&query.sql, arguments)
-            .persistent(reuses_prepared_statements(flavor))
-            .fetch(&mut *connection);
+        let stream = sqlx::query_with(&query.sql, arguments).fetch(&mut *connection);
         match self.bounded(self.collect(stream, decode::mysql_row)).await {
             Ok(result) => result,
             Err(timeout) => {
@@ -302,17 +300,6 @@ impl Connection {
 
 fn saturating_u64(value: u128) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
-}
-
-/// Whether a MySQL-protocol connection keeps its prepared statements for re-execution.
-/// StarRocks (3.5.20, 4.1.4) re-executes a prepared statement whose plan has a correlated
-/// subquery with the parameter values of its first execution, so there every query is prepared,
-/// executed and closed (one extra round trip); docs/starrocks-prepared-statement-stale-params.md.
-fn reuses_prepared_statements(flavor: Flavor) -> bool {
-    match flavor {
-        Flavor::MySql => true,
-        Flavor::StarRocks => false,
-    }
 }
 
 /// Binds the parameters for a MySQL-protocol statement. StarRocks' prepared-statement reader

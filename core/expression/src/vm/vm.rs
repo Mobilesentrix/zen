@@ -1,6 +1,5 @@
 use crate::compiler::{Compare, FetchFastTarget, Jump, Opcode};
 use crate::functions::arguments::Arguments;
-use crate::functions::ms_list::{apply_key_op, KeyOp};
 use crate::functions::registry::FunctionRegistry;
 use crate::functions::{internal, MethodRegistry};
 use crate::scope::Scope;
@@ -23,8 +22,6 @@ pub struct LoopScope {
     len: usize,
     iter: usize,
     count: usize,
-    /// Accumulator of a reduce / scan loop.
-    acc: Variable,
 }
 
 #[derive(Debug)]
@@ -979,7 +976,6 @@ impl<'arena, 'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                                 array: var.clone(),
                                 count: 0,
                                 iter: 0,
-                                acc: Null,
                             })
                         }
                         _ => match var.dynamic::<VmInterval>().map(|s| s.to_array()).flatten() {
@@ -989,7 +985,6 @@ impl<'arena, 'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                                 array: Variable::from_array(arr),
                                 count: 0,
                                 iter: 0,
-                                acc: Null,
                             }),
                         },
                     };
@@ -1005,57 +1000,6 @@ impl<'arena, 'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                 }
                 Opcode::End => {
                     self.scopes.pop();
-                }
-                Opcode::Accumulator(depth) => {
-                    let scope = self
-                        .scopes
-                        .len()
-                        .checked_sub(1 + *depth as usize)
-                        .and_then(|i| self.scopes.get(i))
-                        .ok_or_else(|| OpcodeErr {
-                            opcode: "Accumulator".into(),
-                            message: format!("Scope depth {} out of bounds", depth),
-                        })?;
-
-                    let acc = scope.acc.clone();
-                    self.push(acc);
-                }
-                Opcode::SetAccumulator => {
-                    let value = self.pop()?;
-                    let scope = self.scopes.last_mut().ok_or_else(|| OpcodeErr {
-                        opcode: "SetAccumulator".into(),
-                        message: "Empty scope".into(),
-                    })?;
-
-                    scope.acc = value;
-                }
-                Opcode::ByKey(op) => {
-                    let keys = self.pop()?;
-                    let direction = match op {
-                        KeyOp::SortBy => Some(self.pop()?),
-                        _ => None,
-                    };
-                    let scope = self.scopes.last().ok_or_else(|| OpcodeErr {
-                        opcode: "ByKey".into(),
-                        message: "Empty scope".into(),
-                    })?;
-
-                    let (Array(items), Array(keys)) = (&scope.array, &keys) else {
-                        return Err(OpcodeErr {
-                            opcode: "ByKey".into(),
-                            message: "Unsupported type".into(),
-                        });
-                    };
-
-                    let direction = direction.filter(|d| !matches!(d, Null));
-                    let result =
-                        apply_key_op(*op, &items.borrow(), &keys.borrow(), direction.as_ref())
-                            .map_err(|err| OpcodeErr {
-                                opcode: "ByKey".into(),
-                                message: err.to_string(),
-                            })?;
-
-                    self.push(result);
                 }
                 Opcode::CallFunction { kind, arg_count } => {
                     let function =

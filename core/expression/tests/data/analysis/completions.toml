@@ -201,27 +201,3 @@ expression = "'hello"
 pos = 6
 input = '{"price": 10, "qty": 5}'
 includes = ["price", "qty", "sum"]
-
-# ── MobileSentrix list functions ─────────────────────────────────────────────
-
-[[test]]
-name = "scope includes list functions"
-expression = ""
-pos = 0
-input = '{"x": 1}'
-includes = ["sort", "sortBy", "minBy", "maxBy", "unique", "uniqueBy", "countDistinct", "groupBy", "keyBy", "join", "first", "last", "reduce", "scan"]
-
-[[test]]
-name = "acc inside a reduce callback"
-expression = "reduce(items, a"
-pos = 15
-input = '{"items": [1, 2], "amount": 3}'
-includes = ["acc", "amount"]
-
-[[test]]
-name = "no acc outside a reduce callback"
-expression = "map(items, a"
-pos = 12
-input = '{"items": [1, 2], "amount": 3}'
-includes = ["amount"]
-excludes = ["acc"]
