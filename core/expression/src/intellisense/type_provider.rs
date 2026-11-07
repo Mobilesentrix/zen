@@ -1,6 +1,6 @@
 use crate::functions::internal::InternalFunction;
 use crate::functions::registry::FunctionRegistry;
-use crate::functions::{ClosureFunction, FunctionKind, MethodRegistry};
+use crate::functions::{ClosureFunction, FunctionKind, MethodRegistry, ACCUMULATOR};
 use crate::intellisense::diagnostic::DiagnosticArgs;
 use crate::intellisense::scope::IntelliSenseScope;
 use crate::lexer::{ArithmeticOperator, ComparisonOperator, LogicalOperator, Operator};
@@ -59,6 +59,9 @@ impl From<Rc<VariableType>> for TypeInfo {
         }
     }
 }
+
+#[path = "ms_list_types.rs"]
+mod ms_list_types;
 
 #[derive(Debug)]
 pub struct TypesProvider {
@@ -560,7 +563,7 @@ impl TypesProvider {
 
                 V(VariableType::Interval)
             }
-            Node::FunctionCall { arguments, kind } => {
+            Node::FunctionCall { arguments, kind } => 'call: {
                 let is_closure_kind = matches!(kind, FunctionKind::Closure(_));
                 let mut type_list: Vec<VariableType> = arguments
                     .iter()
@@ -571,7 +574,22 @@ impl TypesProvider {
                     })
                     .collect();
 
-                if let FunctionKind::Closure(_) = kind {
+                if let FunctionKind::Closure(c) = kind {
+                    // The parser appends recovery nodes (e.g. a missing `)`) as arguments.
+                    let provided = arguments
+                        .iter()
+                        .filter(|n| !matches!(n, Node::Error { .. }))
+                        .count();
+                    let (min_arguments, max_arguments) = c.arity();
+                    if provided < min_arguments || provided > max_arguments {
+                        break 'call TypeInfo {
+                            kind: VariableType::Any,
+                            error: Some(format!(
+                                "Expected `{min_arguments} - {max_arguments}` arguments, got `{provided}`."
+                            )),
+                        };
+                    }
+
                     let ptr_type = type_list[0]
                         .iterator()
                         .unwrap_or_else(|| Rc::new(VariableType::Any));
@@ -588,6 +606,12 @@ impl TypesProvider {
                         root_data: scope.root_data.clone(),
                         aliases: scope.aliases.clone(),
                     };
+
+                    if c.has_accumulator() {
+                        closure_scope
+                            .aliases
+                            .insert(Rc::from(ACCUMULATOR), type_list[2].clone());
+                    }
 
                     if let Some(alias_name) = alias {
                         closure_scope
@@ -612,6 +636,12 @@ impl TypesProvider {
                     FunctionKind::Internal(InternalFunction::Values) => {
                         self.values_typecheck(&type_list, arguments)
                     }
+                    FunctionKind::Internal(
+                        list_function @ (InternalFunction::Sort
+                        | InternalFunction::Unique
+                        | InternalFunction::First
+                        | InternalFunction::Last),
+                    ) => self.ms_list_typecheck(*list_function, kind, &type_list, arguments),
                     FunctionKind::Internal(_) | FunctionKind::Deprecated(_) => {
                         let Some(def) = FunctionRegistry::get_definition(kind) else {
                             return V(VariableType::Any);
@@ -644,24 +674,14 @@ impl TypesProvider {
                             );
                         }
 
-                        if matches!(
-                            c,
-                            ClosureFunction::All
-                                | ClosureFunction::None
-                                | ClosureFunction::Some
-                                | ClosureFunction::One
-                                | ClosureFunction::Filter
-                                | ClosureFunction::Count
-                        ) {
-                            if !type_list[1].satisfies(&VariableType::Bool) {
-                                self.set_error(
-                                    arguments[1],
-                                    format!(
-                                        "Callback must return a `bool`, but its return type is `{}`.",
-                                        type_list[1]
-                                    ),
-                                );
-                            }
+                        if c.is_predicate() && !type_list[1].satisfies(&VariableType::Bool) {
+                            self.set_error(
+                                arguments[1],
+                                format!(
+                                    "Callback must return a `bool`, but its return type is `{}`.",
+                                    type_list[1]
+                                ),
+                            );
                         }
 
                         match c {
@@ -682,6 +702,7 @@ impl TypesProvider {
                                 };
                                 V(VariableType::Array(Rc::new(element)))
                             }
+                            _ => self.ms_list_closure_type(*c, &type_list, arguments),
                         }
                     }
                 }

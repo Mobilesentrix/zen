@@ -67,6 +67,10 @@ rquickjs = { version = "0.10", features = ["macro", "loader", "rust-alloc", "fut
 harness = false
 name = "engine"
 
+[[bench]]
+harness = false
+name = "ms_list_vs_function"
+
 [features]
 default = []
 bindgen = ["rquickjs/bindgen"]

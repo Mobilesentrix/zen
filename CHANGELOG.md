@@ -25,6 +25,12 @@ Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons
 - Response bodies are written into `malloc` memory, so the caller can read a large response without a
   copy. The request context is parsed straight into a `Variable`.
 - Benchmarks and a profiling harness (`ms/speedbench`), not part of the shipped library.
+- Expression list functions, so rules no longer need a Function node to sort, rank, group or keep a
+  running total: `sort(array, 'desc'?)`, `sortBy(array, key, 'desc'?)` (stable, nulls last, an array
+  key orders by several fields), `minBy` / `maxBy` (the element; first on ties), `unique`,
+  `uniqueBy`, `countDistinct`, `groupBy` (object of arrays), `keyBy` (first element per key wins),
+  `join(array, separator)`, `first`, `last`, `reduce(array, step, initial)` and
+  `scan(array, step, initial)`; the step reads the accumulator as `acc`. Numbers stay decimal.
 
 ### Changed
 
