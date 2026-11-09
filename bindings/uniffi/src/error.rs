@@ -18,10 +18,21 @@ pub enum ZenError {
     EvaluationError(String),
     ValidationError(String),
 
-    LoaderKeyNotFound { key: String },
-    LoaderInternalError { key: String, details: String },
+    LoaderKeyNotFound {
+        key: String,
+    },
+    LoaderInternalError {
+        key: String,
+        details: String,
+    },
 
-    TemplateEngineError { template: String, details: String },
+    TemplateEngineError {
+        template: String,
+        details: String,
+    },
+
+    /// The database (Lookup step) configuration is invalid. Names connections, never URLs.
+    DatabaseConfigError(String),
 }
 
 impl ZenError {
@@ -37,6 +48,7 @@ impl ZenError {
             ZenError::TemplateEngineError { template, details } => {
                 json!({ "template": template, "details": details }).to_string()
             }
+            ZenError::DatabaseConfigError(error) => error.to_string(),
             ZenError::Zero => String::from("Zero"),
             ZenError::InvalidArgument => String::from("InvalidArgument"),
             ZenError::StringNullError => String::from("StringNullError"),

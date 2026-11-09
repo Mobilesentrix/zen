@@ -1,20 +1,27 @@
 use crate::custom_node::{
     NoopCustomNodeCallback, ZenCustomNodeCallback, ZenCustomNodeCallbackWrapper,
 };
+use crate::database::database_adapter;
 use crate::decision::ZenDecision;
 use crate::error::ZenError;
-use crate::loader::{NoopDecisionLoader, ZenDecisionLoaderCallbackWrapper, ZenLoader};
+use crate::loader::{
+    ContentReader, NoopDecisionLoader, ZenDecisionLoaderCallbackWrapper, ZenLoader,
+};
 use crate::types::{JsonBuffer, ZenBatchRequest, ZenBatchResult, ZenEngineResponse};
+use ms_zen_database::{FallbackAdapter, InstanceRouting, with_evaluation_scope};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::task;
 use zen_engine::loader::DynamicLoader;
+use zen_engine::nodes::custom::DynamicCustomNode;
 use zen_engine::{DecisionEngine, EvaluationOptions};
 
 #[derive(uniffi::Object)]
 pub(crate) struct ZenEngine {
     engine: Arc<DecisionEngine>,
+    /// How `create_decision` reads content (the loader reads stored decisions the same way).
+    reader: ContentReader,
 }
 
 #[derive(uniffi::Record)]
@@ -48,24 +55,40 @@ impl ZenEngine {
         loader: Option<ZenLoader>,
         custom_node: Option<Box<dyn ZenCustomNodeCallback>>,
     ) -> Result<Self, ZenError> {
-        let loader: DynamicLoader = match loader {
-            Some(loader) => loader.into_dynamic_loader()?,
-            None => Arc::new(ZenDecisionLoaderCallbackWrapper(Arc::new(
-                NoopDecisionLoader,
-            ))),
+        let custom_node: DynamicCustomNode = Arc::new(callback_adapter(custom_node));
+        Self::build(loader, custom_node, ContentReader::Plain)
+    }
+
+    /// An engine that runs rules saved by the Rules Engine editor, Lookup (database) steps
+    /// included, exactly as the Rules Engine runs them: every decision the loader returns, and
+    /// the content given to `create_decision`, has its Lookup steps (`databaseNode`) converted
+    /// into the engine's database node.
+    ///
+    /// `database_config` is the connection map JSON (`{"connections": {"<instance>": {"url":
+    /// "mysql://…", "aliases": [...]}}, "default": "<instance>"}`); with none, a Lookup step
+    /// fails with "database node not available". `route_by_instance` true runs each step on the
+    /// connection (or alias) named by its editor instance; false runs every step on the default
+    /// connection. `custom_node` handles every other custom node.
+    #[uniffi::constructor(default(
+        loader = None,
+        custom_node = None,
+        database_config = None,
+        route_by_instance = false
+    ))]
+    pub fn with_database(
+        loader: Option<ZenLoader>,
+        custom_node: Option<Box<dyn ZenCustomNodeCallback>>,
+        database_config: Option<String>,
+        route_by_instance: bool,
+    ) -> Result<Self, ZenError> {
+        let routing = if route_by_instance {
+            InstanceRouting::ByInstance
+        } else {
+            InstanceRouting::DefaultConnection
         };
-
-        let engine = DecisionEngine::new(
-            loader,
-            Arc::new(ZenCustomNodeCallbackWrapper(
-                custom_node.unwrap_or_else(|| Box::new(NoopCustomNodeCallback)),
-            )),
-        );
-        engine.compile();
-
-        Ok(Self {
-            engine: Arc::new(engine),
-        })
+        let fallback: FallbackAdapter = Box::new(callback_adapter(custom_node));
+        let custom_node = database_adapter(database_config.as_deref(), fallback)?;
+        Self::build(loader, custom_node, ContentReader::Editor(routing))
     }
 
     pub async fn evaluate(
@@ -85,8 +108,7 @@ impl ZenEngine {
             Handle::current().block_on(async move {
                 let context = zen_engine::Variable::try_from_value(context)
                     .map_err(|e| ZenError::ValidationError(e.to_string()))?;
-                engine
-                    .evaluate_with_opts(key, context, options.into())
+                with_evaluation_scope(engine.evaluate_with_opts(key, context, options.into()))
                     .await
                     .map(|response| ZenEngineResponse::try_from(response))
                     .map_err(|err| {
@@ -119,15 +141,18 @@ impl ZenEngine {
                         let context: Value = request.context.try_into()?;
                         let context = zen_engine::Variable::try_from_value(context)
                             .map_err(|e| ZenError::ValidationError(e.to_string()))?;
-                        let response = engine
-                            .evaluate_with_opts(request.key, context, options)
-                            .await
-                            .map_err(|err| {
-                                ZenError::EvaluationError(
-                                    serde_json::to_string(&err.as_ref())
-                                        .unwrap_or_else(|_| err.to_string()),
-                                )
-                            })?;
+                        let response = with_evaluation_scope(engine.evaluate_with_opts(
+                            request.key,
+                            context,
+                            options,
+                        ))
+                        .await
+                        .map_err(|err| {
+                            ZenError::EvaluationError(
+                                serde_json::to_string(&err.as_ref())
+                                    .unwrap_or_else(|_| err.to_string()),
+                            )
+                        })?;
 
                         ZenEngineResponse::try_from(response)
                     })
@@ -161,12 +186,17 @@ impl ZenEngine {
     }
 
     pub fn create_decision(&self, content: JsonBuffer) -> Result<ZenDecision, ZenError> {
+        let content = match self.reader {
+            ContentReader::Plain => serde_json::from_slice(&content.0)
+                .map_err(|_| ZenError::JsonDeserializationFailed)?,
+            ContentReader::Editor(_) => self
+                .reader
+                .read(&content.0)
+                .map_err(|e| ZenError::ValidationError(e.to_string()))?,
+        };
         let decision = self
             .engine
-            .create_decision(Arc::new(
-                serde_json::from_slice(&content.0)
-                    .map_err(|_| ZenError::JsonDeserializationFailed)?,
-            ))
+            .create_decision(Arc::new(content))
             .map_err(|e| ZenError::ValidationError(e.to_string()))?;
 
         Ok(ZenDecision::from(decision))
@@ -196,6 +226,37 @@ impl ZenEngine {
 
         Ok(decision)
     }
+}
+
+impl ZenEngine {
+    fn build(
+        loader: Option<ZenLoader>,
+        custom_node: DynamicCustomNode,
+        reader: ContentReader,
+    ) -> Result<Self, ZenError> {
+        let loader: DynamicLoader = match loader {
+            Some(loader) => loader.into_dynamic_loader_with(reader)?,
+            None => Arc::new(ZenDecisionLoaderCallbackWrapper::new(
+                Arc::new(NoopDecisionLoader),
+                reader,
+            )),
+        };
+
+        let engine = DecisionEngine::new(loader, custom_node);
+        engine.compile();
+
+        Ok(Self {
+            engine: Arc::new(engine),
+            reader,
+        })
+    }
+}
+
+/// The foreign custom-node handler (or the no-op one) as an engine adapter.
+fn callback_adapter(
+    custom_node: Option<Box<dyn ZenCustomNodeCallback>>,
+) -> ZenCustomNodeCallbackWrapper {
+    ZenCustomNodeCallbackWrapper(custom_node.unwrap_or_else(|| Box::new(NoopCustomNodeCallback)))
 }
 
 #[cfg(test)]
