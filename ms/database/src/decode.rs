@@ -61,7 +61,7 @@ fn mysql_value(value: MySqlValueRef<'_>, type_name: &str) -> DecodeResult {
         "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" => {
             mysql_as::<i64>(value).map(Value::from)
         }
-        "FLOAT" => mysql_as::<f32>(value).map(|v| float(f64::from(v))),
+        "FLOAT" => mysql_as::<f32>(value).map(float32),
         "DOUBLE" => mysql_as::<f64>(value).map(float),
         "DECIMAL" | "NUMERIC" | "NEWDECIMAL" => mysql_as::<String>(value).map(decimal_string),
         "BOOL" | "BOOLEAN" => mysql_as::<bool>(value).map(Value::Bool),
@@ -114,7 +114,7 @@ fn pg_value(value: PgValueRef<'_>, type_name: &str) -> DecodeResult {
         "INT4" => pg_as::<i32>(value).map(Value::from),
         "INT8" => pg_as::<i64>(value).map(Value::from),
         "OID" => pg_as::<sqlx::postgres::types::Oid>(value).map(|o| Value::from(o.0)),
-        "FLOAT4" => pg_as::<f32>(value).map(|v| float(f64::from(v))),
+        "FLOAT4" => pg_as::<f32>(value).map(float32),
         "FLOAT8" => pg_as::<f64>(value).map(float),
         "NUMERIC" => pg_as::<rust_decimal::Decimal>(value).map(|d| decimal_string(d.to_string())),
         "JSON" | "JSONB" => pg_as::<Value>(value),
@@ -155,6 +155,12 @@ fn float(v: f64) -> Value {
     Number::from_f64(v).map_or(Value::Null, Value::Number)
 }
 
+/// A FLOAT / FLOAT4 as the shortest decimal that names it (0.07, not 0.07000000029802322), the value the
+/// Rules Engine's HTTP backend returns. `f64::from` would keep the float32's binary error.
+fn float32(v: f32) -> Value {
+    float(v.to_string().parse::<f64>().unwrap_or_else(|_| f64::from(v)))
+}
+
 /// Exact decimals stay exact when serde_json has `arbitrary_precision` (the FFI build);
 /// otherwise they become f64. Unparseable text is returned as a string.
 fn decimal_string(s: String) -> Value {
@@ -186,6 +192,15 @@ pub(crate) fn parse_json_strings(value: &mut Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn float32_is_its_shortest_decimal() {
+        assert_eq!(float32(0.07_f32), json!(0.07));
+        assert_eq!(float32(0.03_f32), json!(0.03));
+        assert_eq!(float32(42.5_f32), json!(42.5));
+        assert_eq!(float32(f32::NAN), Value::Null);
+        assert_eq!(float32(f32::INFINITY), Value::Null);
+    }
 
     #[test]
     fn float_nan_and_infinity_become_null() {
