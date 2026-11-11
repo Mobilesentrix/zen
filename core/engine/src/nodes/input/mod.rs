@@ -21,7 +21,18 @@ impl NodeHandler for InputNodeHandler {
             ctx.validate(json_schema, &ctx.input)?;
         }
 
-        let output = dates::DeclaredDates::prepare(&ctx.input, ctx.node.schema.as_deref());
+        // Without a schema the walk only turns engine date values back into their source
+        // text. It visits every object and array of the input, once per rule call; skip it
+        // when no date can be in there.
+        let schema = ctx.node.schema.as_deref();
+        // (Asked first even when a schema exists: the first input node of an evaluation is
+        // the one that records whether the evaluation's own input holds a date.)
+        let may_hold_dates = ctx.extensions.dates.may_hold(&ctx.input);
+        let walk = schema.is_some() || may_hold_dates;
+        let output = match walk {
+            true => dates::DeclaredDates::prepare(&ctx.input, schema),
+            false => None,
+        };
         ctx.success(output.unwrap_or_else(|| ctx.input.clone()))
     }
 }

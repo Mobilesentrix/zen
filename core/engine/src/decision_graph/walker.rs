@@ -122,7 +122,7 @@ impl GraphWalker {
             .fold(Variable::empty_object(), |mut acc, curr| {
                 match self.node_data.get(&curr) {
                     None => acc,
-                    Some(nd) => acc.merge(&nd.data),
+                    Some(nd) => acc.merge_clone(&nd.data),
                 }
             })
     }

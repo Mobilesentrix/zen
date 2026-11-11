@@ -59,7 +59,15 @@ Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons
 - `extract()` and `matches()` reuse compiled regexes (per thread, up to 256 patterns; the cache is
   emptied when full) instead of compiling the pattern on every call: about 180 us per call before. PO
   Plan ship-mode rule 750 -> 243 us/SKU, warehouse-transfers 1,750 -> 1,212 us/SKU, same outputs.
-  Two further engine changes (P2, P3) are proposals only: `docs/engine-speed-proposals.md`.
+- The input node walks the input for engine date values only when one can exist (a schema is present,
+  the evaluation's own input held a date, or a date was made since it started). Inputs parsed from JSON
+  hold none, so a rule that calls a sub-rule once per projection with the whole list no longer walks the
+  list for every call.
+- Expression results that read `$` are deep-copied only when a later write could reach them (a key with a
+  dot, or a new key while a pending value holds `$` itself), not on the spot; what a node returns, and its
+  trace, are unchanged. `ending_variables` merges copy-on-write. PO Plan moq rule 6,500 -> 960 us/SKU,
+  warehouse-transfers 1,380 -> 1,145 us/SKU, the other rules within 5 percent; all 1,147 saved request
+  cases give identical results. `docs/engine-speed-proposals.md`.
 
 ### Fixed
 

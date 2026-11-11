@@ -707,7 +707,7 @@ pub(crate) mod imp {
             }
             Either::Right(arr) => {
                 let max = arr.into_iter().min().context("Empty array")?;
-                Ok(V::Dynamic(Rc::new(max)))
+                Ok(crate::DateValue::wrap(max))
             }
         }
     }
@@ -722,7 +722,7 @@ pub(crate) mod imp {
             }
             Either::Right(arr) => {
                 let max = arr.into_iter().max().context("Empty array")?;
-                Ok(V::Dynamic(Rc::new(max)))
+                Ok(crate::DateValue::wrap(max))
             }
         }
     }
@@ -989,6 +989,6 @@ pub(crate) mod imp {
             None => VmDate::now(),
         };
 
-        Ok(V::Dynamic(Rc::new(date_time)))
+        Ok(crate::DateValue::wrap(date_time))
     }
 }
