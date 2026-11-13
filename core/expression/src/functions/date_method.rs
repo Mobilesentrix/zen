@@ -239,7 +239,7 @@ mod imp {
         let duration = __internal_extract_duration(&args, 1)?;
 
         let date_time = this.add(duration);
-        Ok(V::Dynamic(Rc::new(date_time)))
+        Ok(crate::DateValue::wrap(date_time))
     }
 
     pub fn sub(args: Arguments) -> anyhow::Result<V> {
@@ -247,7 +247,7 @@ mod imp {
         let duration = __internal_extract_duration(&args, 1)?;
 
         let date_time = this.sub(duration);
-        Ok(V::Dynamic(Rc::new(date_time)))
+        Ok(crate::DateValue::wrap(date_time))
     }
 
     pub fn set(args: Arguments) -> anyhow::Result<V> {
@@ -258,7 +258,7 @@ mod imp {
         let value_u32 = value.to_u32().context("Invalid duration value")?;
 
         let date_time = this.set(value_u32, unit);
-        Ok(V::Dynamic(Rc::new(date_time)))
+        Ok(crate::DateValue::wrap(date_time))
     }
 
     pub fn format(args: Arguments) -> anyhow::Result<V> {
@@ -274,7 +274,7 @@ mod imp {
         let unit = __internal_extract_duration_unit(&args, 1)?;
 
         let date_time = this.start_of(unit);
-        Ok(V::Dynamic(Rc::new(date_time)))
+        Ok(crate::DateValue::wrap(date_time))
     }
 
     pub fn end_of(args: Arguments) -> anyhow::Result<V> {
@@ -282,7 +282,7 @@ mod imp {
         let unit = __internal_extract_duration_unit(&args, 1)?;
 
         let date_time = this.end_of(unit);
-        Ok(V::Dynamic(Rc::new(date_time)))
+        Ok(crate::DateValue::wrap(date_time))
     }
 
     pub fn diff(args: Arguments) -> anyhow::Result<V> {
@@ -306,7 +306,7 @@ mod imp {
         let tz_str = args.str(1)?;
 
         let timezone = Tz::from_str(tz_str).context("Invalid timezone")?;
-        Ok(V::Dynamic(Rc::new(this.tz(timezone))))
+        Ok(crate::DateValue::wrap(this.tz(timezone)))
     }
 
     pub fn compare_using(op: CompareOperation) -> Rc<dyn FunctionDefinition> {

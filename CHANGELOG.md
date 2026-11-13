@@ -4,6 +4,13 @@
 
 Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons.
 
+### Fixed
+
+- StarRocks Lookups with a subquery could return another request's row: StarRocks re-executes a
+  prepared statement with the parameters of its first execution. On StarRocks every query is now
+  prepared, executed and closed (one extra round trip, about 1 ms for a point lookup, 8 ms for a
+  correlated subquery on a local FE). `docs/starrocks-prepared-statement-stale-params.md`.
+
 ### Added
 
 - Database node (custom node kind `database`) for MySQL, StarRocks and Postgres: `{{ expr }}`
@@ -24,7 +31,22 @@ Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons
   partial trace and, on the failing node, a structured `error`.
 - Response bodies are written into `malloc` memory, so the caller can read a large response without a
   copy. The request context is parsed straight into a `Variable`.
+- `executionMode: "sequential"` for decision, decision-table and expression steps: items evaluated in
+  order with a state carried between them, early `stop`, `maxIterations`; a failing item is named by
+  its index (ADR 0006).
 - Benchmarks and a profiling harness (`ms/speedbench`), not part of the shipped library.
+- Expression list functions, so rules no longer need a Function node to sort, rank, group or keep a
+  running total: `sort(array, 'desc'?)`, `sortBy(array, key, 'desc'?)` (stable, nulls last, an array
+  key orders by several fields), `minBy` / `maxBy` (the element; first on ties), `unique`,
+  `uniqueBy`, `countDistinct`, `groupBy` (object of arrays), `keyBy` (first element per key wins),
+  `join(array, separator)`, `first`, `last`, `reduce(array, step, initial)` and
+  `scan(array, step, initial)`; the step reads the accumulator as `acc`. Numbers stay decimal.
+- The editor's Lookup step (`databaseNode`) is converted into the database node in Rust
+  (`ms_zen_database::editor`: `prepare_decision_content`, `transform_database_nodes`), the same SQL
+  and config as the Go module (parity test over 3,000 cases).
+- uniffi: `ZenEngine.withDatabase(loader, customNode, databaseConfig, routeByInstance)` runs rules
+  with Lookup steps (every loader kind and `createDecision` convert them); error
+  `DatabaseConfigError`. Evaluations run inside the database de-duplication scope.
 
 ### Changed
 
@@ -34,9 +56,23 @@ Base: upstream `zen-engine-v2.1.6`. See [FORK.md](FORK.md) for files and reasons
 - Large objects and traces keep insertion order.
 - JS function results convert each distinct key once.
 - `compile()` works for engines created with a loader config.
+- `extract()` and `matches()` reuse compiled regexes (per thread, up to 256 patterns; the cache is
+  emptied when full) instead of compiling the pattern on every call: about 180 us per call before. PO
+  Plan ship-mode rule 750 -> 243 us/SKU, warehouse-transfers 1,750 -> 1,212 us/SKU, same outputs.
+- The input node walks the input for engine date values only when one can exist (a schema is present,
+  the evaluation's own input held a date, or a date was made since it started). Inputs parsed from JSON
+  hold none, so a rule that calls a sub-rule once per projection with the whole list no longer walks the
+  list for every call.
+- Expression results that read `$` are deep-copied only when a later write could reach them (a key with a
+  dot, or a new key while a pending value holds `$` itself), not on the spot; what a node returns, and its
+  trace, are unchanged. `ending_variables` merges copy-on-write. PO Plan moq rule 6,500 -> 960 us/SKU,
+  warehouse-transfers 1,380 -> 1,145 us/SKU, the other rules within 5 percent; all 1,147 saved request
+  cases give identical results. `docs/engine-speed-proposals.md`.
 
 ### Fixed
 
+- An invalid database configuration given from inside an async task is an error, not a panic
+  (the database runtime was dropped in an async context).
 - A panic inside an `extern "C"` function no longer aborts the host process; every export has a panic
   guard.
 - The trace of a failed evaluation is no longer serialised as `null`.

@@ -323,6 +323,17 @@ fn function_info(fk: &FunctionKind) -> String {
             InternalFunction::Len => "Returns the length of variable",
             InternalFunction::Contains => "Checks if variable contains a needle",
             InternalFunction::Flatten => "Flattens an array",
+            InternalFunction::Sort => {
+                "Sorts an array of numbers, strings, booleans or dates (stable, nulls last); pass 'desc' to reverse"
+            }
+            InternalFunction::Unique => {
+                "Removes duplicate values (deep equality), keeping the first occurrence"
+            }
+            InternalFunction::Join => {
+                "Joins an array of strings or numbers into one string with the separator"
+            }
+            InternalFunction::First => "Returns the first element of an array, or null if empty",
+            InternalFunction::Last => "Returns the last element of an array, or null if empty",
             InternalFunction::Upper => "Converts all characters in a string to uppercase",
             InternalFunction::Lower => "Converts all characters in a string to lowercase",
             InternalFunction::Trim => {
@@ -412,6 +423,31 @@ fn function_info(fk: &FunctionKind) -> String {
             ClosureFunction::Map => "Creates a new array by transforming each element",
             ClosureFunction::FlatMap => "Maps each element then flattens the result",
             ClosureFunction::Count => "Counts elements that satisfy the condition",
+            ClosureFunction::SortBy => {
+                "Sorts elements by a key (stable, nulls last); an array key sorts by several fields; pass 'desc' to reverse"
+            }
+            ClosureFunction::MinBy => {
+                "Returns the element with the smallest key (first on ties, null keys skipped), or null"
+            }
+            ClosureFunction::MaxBy => {
+                "Returns the element with the largest key (first on ties, null keys skipped), or null"
+            }
+            ClosureFunction::UniqueBy => {
+                "Keeps the first element for each distinct key, in input order"
+            }
+            ClosureFunction::CountDistinct => "Counts the distinct keys",
+            ClosureFunction::GroupBy => {
+                "Groups elements into an object of arrays, named by the key as string() converts it"
+            }
+            ClosureFunction::KeyBy => {
+                "Indexes elements into an object named by the key; the first element per key wins"
+            }
+            ClosureFunction::Reduce => {
+                "Folds the array into one value; the callback reads the accumulator as `acc`"
+            }
+            ClosureFunction::Scan => {
+                "Like reduce, but returns the accumulator after every element (running totals)"
+            }
         },
     };
     s.to_string()
@@ -423,6 +459,11 @@ fn function_param_names(fk: &FunctionKind) -> Vec<&'static str> {
             InternalFunction::Len => vec!["var"],
             InternalFunction::Contains => vec!["haystack", "needle"],
             InternalFunction::Flatten => vec!["arr"],
+            InternalFunction::Sort => vec!["arr", "direction"],
+            InternalFunction::Unique | InternalFunction::First | InternalFunction::Last => {
+                vec!["arr"]
+            }
+            InternalFunction::Join => vec!["arr", "separator"],
             InternalFunction::Upper | InternalFunction::Lower | InternalFunction::Trim => {
                 vec!["str"]
             }
@@ -513,6 +554,31 @@ fn function_signature(fk: &FunctionKind) -> String {
             }
             ClosureFunction::Count => {
                 "<T>(array: T[], callback: Callback<T, boolean>) -> number".to_string()
+            }
+            ClosureFunction::SortBy => {
+                "<T, K>(array: T[], key: Callback<T, K>, direction?: 'asc' | 'desc') -> T[]"
+                    .to_string()
+            }
+            ClosureFunction::MinBy | ClosureFunction::MaxBy => {
+                "<T, K>(array: T[], key: Callback<T, K>) -> T | null".to_string()
+            }
+            ClosureFunction::UniqueBy => {
+                "<T, K>(array: T[], key: Callback<T, K>) -> T[]".to_string()
+            }
+            ClosureFunction::CountDistinct => {
+                "<T, K>(array: T[], key: Callback<T, K>) -> number".to_string()
+            }
+            ClosureFunction::GroupBy => {
+                "<T, K>(array: T[], key: Callback<T, K>) -> Record<string, T[]>".to_string()
+            }
+            ClosureFunction::KeyBy => {
+                "<T, K>(array: T[], key: Callback<T, K>) -> Record<string, T>".to_string()
+            }
+            ClosureFunction::Reduce => {
+                "<T, A>(array: T[], callback: Callback<T, A>, initial: A) -> A".to_string()
+            }
+            ClosureFunction::Scan => {
+                "<T, A>(array: T[], callback: Callback<T, A>, initial: A) -> A[]".to_string()
             }
         },
     }

@@ -10,3 +10,4 @@ Decisions behind the MobileSentrix changes to this fork of gorules/zen. The list
 | [0003](0003-evaluation-hot-path.md) | Evaluation hot path: graph view, node data, isolate |
 | [0004](0004-database-crate-layout.md) | Database crate layout |
 | [0005](0005-fork-code-comments-and-lints.md) | Fork code comments and lints |
+| [0006](0006-sequential-execution-mode.md) | Sequential execution mode (items in order, with a carried state) |

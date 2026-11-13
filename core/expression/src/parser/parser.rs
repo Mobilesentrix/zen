@@ -732,7 +732,7 @@ impl<'arena, 'token_ref, Flavor> Parser<'arena, 'token_ref, Flavor> {
 
         self.next();
         let function_node = match function {
-            FunctionKind::Closure(_) => {
+            FunctionKind::Closure(closure_function) => {
                 let mut arguments = BumpVec::new_in(&self.bump);
 
                 arguments.push(expression_parser(ParserContext::Global));
@@ -772,6 +772,15 @@ impl<'arena, 'token_ref, Flavor> Parser<'arena, 'token_ref, Flavor> {
                 };
 
                 arguments.push(self.closure(&expression_parser, alias));
+                // Trailing arguments (sortBy direction, reduce/scan initial value) are
+                // evaluated outside the callback.
+                let (_, max_arguments) = closure_function.arity();
+                while arguments.len() < max_arguments
+                    && self.current_kind() == Some(&TokenKind::Operator(Operator::Comma))
+                {
+                    self.next();
+                    arguments.push(expression_parser(ParserContext::Global));
+                }
                 if let Some(error) = self.expect(TokenKind::Bracket(Bracket::RightParenthesis)) {
                     arguments.push(error);
                 }

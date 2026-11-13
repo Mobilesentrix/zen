@@ -14,6 +14,7 @@ pub(crate) mod defs;
 mod deprecated;
 pub(crate) mod internal;
 mod method;
+pub(crate) mod ms_list;
 pub(crate) mod registry;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -55,4 +56,49 @@ pub enum ClosureFunction {
     Map,
     FlatMap,
     Count,
+    // MobileSentrix list functions (see ms_list.rs)
+    SortBy,
+    MinBy,
+    MaxBy,
+    UniqueBy,
+    CountDistinct,
+    GroupBy,
+    KeyBy,
+    Reduce,
+    Scan,
+}
+
+/// Name of the accumulator inside a `reduce` / `scan` callback.
+pub const ACCUMULATOR: &str = "acc";
+
+impl ClosureFunction {
+    /// The callback must return a bool (`filter`, `all`, ...); the others take any value
+    /// (a key, a mapped value, the next accumulator).
+    pub fn is_predicate(&self) -> bool {
+        matches!(
+            self,
+            Self::All | Self::None | Self::Some | Self::One | Self::Filter | Self::Count
+        )
+    }
+
+    /// Accepted argument counts. The array is always argument 0 and the callback argument 1;
+    /// `sortBy` takes an optional direction and `reduce` / `scan` a required initial value
+    /// as argument 2. Argument 2 is evaluated outside the callback.
+    pub fn arity(&self) -> (usize, usize) {
+        match self {
+            Self::SortBy => (2, 3),
+            Self::Reduce | Self::Scan => (3, 3),
+            _ => (2, 2),
+        }
+    }
+
+    pub fn accepts_arguments(&self, count: usize) -> bool {
+        let (min, max) = self.arity();
+        (min..=max).contains(&count)
+    }
+
+    /// The callback can read the accumulator `acc`.
+    pub fn has_accumulator(&self) -> bool {
+        matches!(self, Self::Reduce | Self::Scan)
+    }
 }
